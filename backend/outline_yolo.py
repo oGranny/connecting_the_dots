@@ -1,17 +1,21 @@
 # outline_yolo.py
 # Extract H1/H2/H3 headings from a single PDF using DocLayout-YOLO + PyMuPDF.
 
-import os, re, json
+import os
+import re
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 import fitz  # PyMuPDF
 import cv2
 from PIL import Image
 import numpy as np
-from collections import defaultdict
 
-from doclayout_yolo import YOLOv10
+# Try both class names to be robust across versions
+try:
+    from doclayout_yolo import YOLOv10 as _YOLO
+except Exception:
+    from doclayout_yolo import YOLO as _YOLO  # fallback
 
 try:
     from sklearn.cluster import KMeans
@@ -75,7 +79,7 @@ def _cluster_levels_by_height(cands: List[Dict[str, Any]]) -> List[str]:
     return [cluster_to_level[int(lab)] for lab in labels]
 
 
-def _convert_pdf_page_to_image(pdf_path: str, page_idx: int, dpi: int = 200) -> Image.Image | None:
+def _convert_pdf_page_to_image(pdf_path: str, page_idx: int, dpi: int = 200) -> Optional[Image.Image]:
     """Return PIL image for PDF page (0-based index)."""
     try:
         doc = fitz.open(pdf_path)
@@ -93,12 +97,12 @@ def _convert_pdf_page_to_image(pdf_path: str, page_idx: int, dpi: int = 200) -> 
 _MODEL = None
 _MODEL_PATH = None
 
-def _get_model(model_path: str) -> YOLOv10:
+def _get_model(model_path: str):
     global _MODEL, _MODEL_PATH
     if _MODEL is None or _MODEL_PATH != model_path:
         if not os.path.exists(model_path):
             raise FileNotFoundError(f"DocLayout-YOLO model not found at: {os.path.abspath(model_path)}")
-        _MODEL = YOLOv10(model_path)
+        _MODEL = _YOLO(model_path)
         _MODEL_PATH = model_path
     return _MODEL
 

@@ -166,19 +166,26 @@ def outline_yolo():
     data = request.get_json(force=True, silent=True) or {}
     file_id = data.get("id")
     if not file_id:
-        return jsonify({"error": "Provide uploaded file 'id'"}), 400
+        return jsonify({"error": "bad-request", "detail": "Provide uploaded file 'id'"}), 400
 
     pdf_path = os.path.join(UPLOAD_DIR, file_id)
     if not os.path.exists(pdf_path):
-        return jsonify({"error": "File not found"}), 404
+        return jsonify({"error": "file-not-found", "detail": f"PDF not found: {pdf_path}"}), 404
+
+    # NEW: explicit model check with absolute path in error
+    if not os.path.exists(YOLO_MODEL):
+        return jsonify({
+            "error": "model-missing",
+            "detail": f"YOLO model not found at {os.path.abspath(YOLO_MODEL)}. "
+                      f"Put model.pt there or set YOLO_MODEL env var."
+        }), 500
 
     try:
         out = build_outline_for_file(pdf_path, model_path=YOLO_MODEL, dpi=200)
-        # out.outline has 0-based pages; Adobe expects 1-based — frontend can +1.
         return jsonify(out)
     except Exception as e:
+        # bubble up exception detail so you can see it in DevTools → Network
         return jsonify({"error": "outline-failed", "detail": str(e)}), 500
-
 
 @app.post("/api/upload")
 def upload():
