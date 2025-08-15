@@ -1,23 +1,22 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { uuid, sleep } from "./lib/utils";
 import useDragResize from "./hooks/useDragResize";
-import CenterViewer from "./components/CenterViewer";
+import CenterViewer from "./components/viewer/CenterViewer";
 import Sidebar from "./components/Sidebar";
 import Tabs from "./components/Tabs";
 import ChatPanel from "./components/ChatPanel";
 import { API_BASE, uploadToBackend as uploadFile, detectHeadings as detect } from "./services/api";
+import StatusBar from "./components/StatusBar";
 
 /* =========================
   Config now in services/api.js (API_BASE)
 ========================= */
 
-
-/* -------------------- Main -------------------- */
 export default function App() {
   const left = useDragResize({ initial: 260, min: 200, max: 420 });
   const right = useDragResize({ initial: 260, min: 280, max: 560, invert: true });
 
-  const [files, setFiles] = useState([]); // {id, name, url, file, serverId, size}
+  const [files, setFiles] = useState([]);                 // {id, name, url, file, serverId, size}
   const [activeId, setActiveId] = useState(null);
 
   // headings per LOCAL file id: { [fileId]: Array<{id, level, title, page, hidden?}> }
@@ -25,8 +24,43 @@ export default function App() {
   // analysis status per LOCAL file id: 'pending' | 'done' | 'error'
   const [analyzing, setAnalyzing] = useState({});
 
-  // hold viewer API to jump when clicking headings
+  // viewer API to jump when clicking headings
   const viewerApiRef = useRef({ gotoPage: () => {}, search: () => {} });
+
+  // status bar state
+  const [backend, setBackend] = useState({ online: false, pingMs: null });
+  const [viewerStatus, setViewerStatus] = useState({});   // { page, fit? }
+
+  /* ---------- Backend health ping (TOP-LEVEL EFFECT) ---------- */
+  useEffect(() => {
+    let mounted = true;
+    const url = `${(API_BASE || "").replace(/\/+$/, "")}/api/health`;
+
+    const ping = async () => {
+      const t0 = performance.now();
+      try {
+        const res = await fetch(url, { cache: "no-store" });
+        if (!mounted) return;
+        setBackend({
+          online: res.ok,
+          pingMs: res.ok ? Math.round(performance.now() - t0) : null,
+        });
+      } catch {
+        if (!mounted) return;
+        setBackend({ online: false, pingMs: null });
+      }
+    };
+
+    ping();
+    const onFocus = () => ping();
+    const id = setInterval(ping, 30000);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      mounted = false;
+      clearInterval(id);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, []);
 
   /* ---------- Backend calls (stable) ---------- */
   const uploadToBackend = useCallback(async (file) => uploadFile(file), []);
@@ -57,43 +91,49 @@ export default function App() {
     }
   }, []);
 
-  const addFiles = useCallback(async (fileList) => {
-    if (!fileList?.length) return;
-    const items = await Promise.all(
-      fileList.map(async (f) => {
-        try {
-          const meta = await uploadToBackend(f);
-          return {
-            id: uuid(),
-            name: f.name,
-            url: `${API_BASE}${meta.url}`, // absolute if API_BASE set; else relative (proxy)
-            file: f,
-            serverId: meta.id,
-            size: meta.size,
-          };
-        } catch {
-          // fallback (no backend)
-          return {
-            id: uuid(),
-            name: f.name,
-            url: URL.createObjectURL(f),
-            file: f,
-            serverId: null,
-            size: f.size,
-          };
-        }
-      })
-    );
+  // compute visible headings count for status bar
+  const visibleHeadingsCount = (headingsByFile[activeId] || []).filter((h) => !h.hidden).length;
 
-    setFiles((prev) => {
-      const next = [...prev, ...items];
-      if (!activeId && next.length) setActiveId(next[0].id);
-      return next;
-    });
+  const addFiles = useCallback(
+    async (fileList) => {
+      if (!fileList?.length) return;
+      const items = await Promise.all(
+        fileList.map(async (f) => {
+          try {
+            const meta = await uploadToBackend(f);
+            return {
+              id: uuid(),
+              name: f.name,
+              url: `${API_BASE}${meta.url}`, // absolute if API_BASE set; else relative (proxy)
+              file: f,
+              serverId: meta.id,
+              size: meta.size,
+            };
+          } catch {
+            // fallback (no backend)
+            return {
+              id: uuid(),
+              name: f.name,
+              url: URL.createObjectURL(f),
+              file: f,
+              serverId: null,
+              size: f.size,
+            };
+          }
+        })
+      );
 
-    // auto-run heading detection for each uploaded file
-    for (const it of items) detectHeadingsForFile(it);
-  }, [uploadToBackend, detectHeadingsForFile, activeId]);
+      setFiles((prev) => {
+        const next = [...prev, ...items];
+        if (!activeId && next.length) setActiveId(next[0].id);
+        return next;
+      });
+
+      // auto-run heading detection for each uploaded file
+      for (const it of items) detectHeadingsForFile(it);
+    },
+    [uploadToBackend, detectHeadingsForFile, activeId]
+  );
 
   function closeTab(id) {
     setFiles((prev) => {
@@ -126,12 +166,15 @@ export default function App() {
     }
   }, [activeId, files, headingsByFile, analyzing, detectHeadingsForFile]);
 
-  // drag & drop on center (uses stable addFiles, fixes ESLint warning)
+  // drag & drop on center
   const dropRef = useRef(null);
   useEffect(() => {
     const el = dropRef.current;
     if (!el) return;
-    const prevent = (e) => { e.preventDefault(); e.stopPropagation(); };
+    const prevent = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+    };
     const onDrop = (e) => {
       prevent(e);
       const dropped = Array.from(e.dataTransfer.files || []).filter((f) => f.type === "application/pdf");
@@ -146,23 +189,32 @@ export default function App() {
   }, [addFiles]);
 
   // filter handler for Sidebar
-  const handleFilter = useCallback((q) => {
-    const query = (q || "").toLowerCase();
-    setHeadingsByFile((prev) => {
-      const arr = prev[activeId] || [];
-      return { ...prev, [activeId]: arr.map((h) => ({ ...h, hidden: query && !(`${h.title}`.toLowerCase().includes(query)) })) };
-    });
-  }, [activeId]);
+  const handleFilter = useCallback(
+    (q) => {
+      const query = (q || "").toLowerCase();
+      setHeadingsByFile((prev) => {
+        const arr = prev[activeId] || [];
+        return {
+          ...prev,
+          [activeId]: arr.map((h) => ({
+            ...h,
+            hidden: query && !`${h.title}`.toLowerCase().includes(query),
+          })),
+        };
+      });
+    },
+    [activeId]
+  );
 
   return (
-    <div className="fixed inset-0 w-full h-full overflow-hidden bg-black text-slate-100">
+    <div className="fixed inset-0 w-full h-full flex flex-col overflow-hidden bg-black text-slate-100">
       {/* top bar */}
-      <div className="flex items-center gap-3 px-4 h-12 border-b border-slate-800/80 bg-black/70 backdrop-blur">
-        <div className="mx-auto text-sm font-medium">Document Workspace · Headings & Jumps</div>
-      </div>
+      {/* <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/80 bg-black/70">
+        <div className="mx-auto text-sm font-medium">Document Workspace</div>
+      </div> */}
 
-      {/* main body */}
-      <div className="h-[calc(100%-3rem)] w-full flex overflow-hidden">
+      {/* main body (subtract TOP: 3rem and BOTTOM: 2rem) */}
+      <div className="h-[calc(100%-3rem-2rem)] w-full flex grow overflow-hidden">
         {/* left sidebar */}
         <div style={{ width: left.width }} className="h-full border-r border-neutral-800 bg-black/60 flex flex-col">
           <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
@@ -176,7 +228,7 @@ export default function App() {
         </div>
 
         {/* left handle */}
-        <div onMouseDown={left.startDrag} title="Drag to resize" className="w-2 cursor-col-resize grid place-items-center">
+        <div onMouseDown={left.startDrag} title="Drag to resize" className="w-2 border-r-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
           <div className="w-1 h-10 rounded bg-slate-700" />
         </div>
 
@@ -192,12 +244,15 @@ export default function App() {
           />
           <CenterViewer
             activeFile={activeFile}
-            onReady={(api) => { viewerApiRef.current = api || {}; }}
+            onReady={(api) => {
+              viewerApiRef.current = api || {};
+            }}
+            onStatus={setViewerStatus} // lets StatusBar show current page/fit
           />
         </div>
 
         {/* right handle */}
-        <div onMouseDown={right.startDrag} title="Drag to resize" className="w-2 cursor-col-resize grid place-items-center">
+        <div onMouseDown={right.startDrag} title="Drag to resize" className="w-2 border-l-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
           <div className="w-1 h-10 rounded bg-slate-700" />
         </div>
 
@@ -206,6 +261,16 @@ export default function App() {
           <ChatPanel activeFile={activeFile} />
         </div>
       </div>
+
+      {/* bottom status bar */}
+      <StatusBar
+        activeFile={activeFile}
+        headingsCount={visibleHeadingsCount}
+        analyzingStatus={activeStatus}
+        backend={backend}
+        viewerStatus={viewerStatus}
+        tone="slate"   // try: "violet" | "emerald" | "rose" | "slate"
+      />
     </div>
   );
 }

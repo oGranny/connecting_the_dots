@@ -64,9 +64,11 @@ export default function Sidebar({ headings = [], status, onJumpToHeading, onFilt
             )}
             title={`Go to page ${h.page}`}
           >
-            <FileText size={14} />
+          <span className="inline-flex items-center justify-center w-4 h-4 mr-2 flex-none leading-none">
+            <FileText className="w-3.5 h-3.5 text-slate-300" strokeWidth={1.8} aria-hidden="true" />
+          </span>
             <span className="text-xs truncate">H{h.level} · {h.title}</span>
-            <span className="ml-auto text-[10px] text-slate-400">p.{h.page}</span>
+            {/* <span className="ml-auto text-[10px] text-slate-400">p.{h.page}</span> */}
           </div>
         ))}
       </Section>
