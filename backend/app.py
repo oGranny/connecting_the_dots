@@ -222,9 +222,12 @@ def list_files():
 
 @app.get("/uploads/<path:filename>")
 def serve_upload(filename):
-    # CORS header for convenience
-    resp = send_from_directory(UPLOAD_DIR, filename)
-    resp.headers["Access-Control-Allow-Origin"] = FRONTEND_ORIGIN if FRONTEND_ORIGIN != "*" else "*"
+    resp = send_from_directory(UPLOAD_DIR, filename, mimetype="application/pdf")
+    origin = FRONTEND_ORIGIN if FRONTEND_ORIGIN != "*" else "*"
+    resp.headers["Access-Control-Allow-Origin"] = origin
+    resp.headers["Accept-Ranges"] = "bytes"
+    # Optional: avoid dev caching oddities
+    resp.headers["Cache-Control"] = "no-store"
     return resp
 
 
