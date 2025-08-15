@@ -158,7 +158,7 @@ export default function App() {
     <div className="fixed inset-0 w-full h-full overflow-hidden bg-black text-slate-100">
       {/* top bar */}
       <div className="flex items-center gap-3 px-4 h-12 border-b border-slate-800/80 bg-black/70 backdrop-blur">
-        <div className="mx-auto text-sm font-medium">Document Workspace · Headings & Jumps</div>
+        <div className="mx-auto text-sm font-medium"> Document Workspace · (Adobe-free viewer) </div>
       </div>
 
       {/* main body */}
