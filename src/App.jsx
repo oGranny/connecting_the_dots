@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import { uuid, sleep } from "./lib/utils";
 import useDragResize from "./hooks/useDragResize";
-import CenterViewer from "./components/CenterViewer";
+import CenterViewer from "./components/viewer/CenterViewer";
 import Sidebar from "./components/Sidebar";
 import Tabs from "./components/Tabs";
 import ChatPanel from "./components/ChatPanel";
@@ -209,9 +209,9 @@ export default function App() {
   return (
     <div className="fixed inset-0 w-full h-full flex flex-col overflow-hidden bg-black text-slate-100">
       {/* top bar */}
-      <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/80 bg-black/70">
+      {/* <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/80 bg-black/70">
         <div className="mx-auto text-sm font-medium">Document Workspace</div>
-      </div>
+      </div> */}
 
       {/* main body (subtract TOP: 3rem and BOTTOM: 2rem) */}
       <div className="h-[calc(100%-3rem-2rem)] w-full flex grow overflow-hidden">

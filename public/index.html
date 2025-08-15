@@ -24,7 +24,34 @@
       work correctly both with client-side routing and a non-root public URL.
       Learn how to configure a non-root public URL by running `npm run build`.
     -->
-    <script src="https://acrobatservices.adobe.com/view-sdk/viewer.js"></script>
+    <!-- Block browser Ctrl+Wheel / pinch before React mounts -->
+<script>
+(function () {
+  function onWheel(e){ if (e.ctrlKey) e.preventDefault(); }
+  function onKey(e){
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const k = e.key.toLowerCase();
+    if (["+", "=", "-", "_", "0"].includes(k) || (e.code||"").startsWith("Numpad")) e.preventDefault();
+  }
+  function onGest(e){ e.preventDefault(); }
+
+  window.addEventListener("wheel", onWheel, { passive:false, capture:true });
+  window.addEventListener("keydown", onKey, { passive:false, capture:true });
+  window.addEventListener("gesturestart", onGest, { passive:false, capture:true });
+  window.addEventListener("gesturechange", onGest, { passive:false, capture:true });
+  window.addEventListener("gestureend", onGest, { passive:false, capture:true });
+
+  // allow React to remove these later if you want to scope to the viewer only
+  window.__disableGlobalCtrlZoomBlocker = function(){
+    window.removeEventListener("wheel", onWheel, { capture:true });
+    window.removeEventListener("keydown", onKey, { capture:true });
+    window.removeEventListener("gesturestart", onGest, { capture:true });
+    window.removeEventListener("gesturechange", onGest, { capture:true });
+    window.removeEventListener("gestureend", onGest, { capture:true });
+  };
+})();
+</script>
+
 
     <title>React App</title>
   </head>

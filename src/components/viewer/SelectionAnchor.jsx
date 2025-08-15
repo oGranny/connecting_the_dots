@@ -1,4 +1,3 @@
-// src/components/SelectionAnchor.jsx
 import React, { useEffect, useRef, useState } from "react";
 
 export default function SelectionAnchor({
