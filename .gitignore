@@ -25,4 +25,6 @@ yarn-error.log*
 */__pycache__/
 */.venv/
 
-*/uploads/
+**/uploads/**
+# !**/uploads/.gitkeep
+*/rag_index/

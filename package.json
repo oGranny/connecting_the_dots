@@ -1,6 +1,7 @@
 {
   "name": "connectingthedots",
   "version": "0.1.0",
+  "proxy": "http://localhost:4000",
   "private": true,
   "dependencies": {
     "@react-pdf-viewer/core": "^3.12.0",
