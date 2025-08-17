@@ -1,0 +1,38 @@
+/* Dark, subtle scrollbars that match neutral-950 + slate accents */
+
+/* Firefox */
+.themed-scroll {
+  color-scheme: dark;                 /* hints native controls to go dark */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148,163,184,.55) rgba(2,6,23,1); /* thumb / track */
+  scrollbar-gutter: stable both-edges;
+}
+
+/* Chromium/WebKit */
+.themed-scroll::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.themed-scroll::-webkit-scrollbar-track {
+  background: rgba(255,255,255,0.04);                /* ~ white/5 */
+  border-left: 1px solid rgba(255,255,255,0.06);     /* ~ white/10 */
+}
+
+.themed-scroll::-webkit-scrollbar-thumb {
+  background: linear-gradient(
+    180deg,
+    rgba(148,163,184,.70),
+    rgba(71,85,105,.70)
+  );                                                /* slate-300 → slate-600 tint */
+  border-radius: 9999px;                            /* full round */
+  border: 2px solid rgba(2,6,23,1);                 /* matches neutral-950 bg */
+}
+
+.themed-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(148,163,184,.85);
+}
+
+.themed-scroll::-webkit-scrollbar-corner {
+  background: rgba(2,6,23,1);
+}

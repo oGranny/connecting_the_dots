@@ -7,6 +7,8 @@ import Tabs from "./components/Tabs";
 import ChatPanel from "./components/ChatPanel";
 import { API_BASE, uploadToBackend as uploadFile, detectHeadings as detect } from "./services/api";
 import StatusBar from "./components/StatusBar";
+import "./components/viewer/scrollbar.css";
+import "./components/viewer/selection.css";
 
 /* =========================
   Config now in services/api.js (API_BASE)

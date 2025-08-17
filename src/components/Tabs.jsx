@@ -4,7 +4,7 @@ import { cls } from "../lib/utils";
 
 export default function Tabs({ files, activeId, onSelect, onClose, onAdd, analyzing }) {
   return (
-    <div className="flex items-center gap-2 px-2 pt-2 border-b border-slate-700/60">
+    <div className="flex items-center gap-2 px-2 pt-2 border-b border-white/10">
       <div className="flex-1 overflow-x-auto no-scrollbar">
         <div className="flex items-center gap-1">
           {files.map((f) => {
@@ -16,8 +16,8 @@ export default function Tabs({ files, activeId, onSelect, onClose, onAdd, analyz
                 className={cls(
                   "group inline-flex items-center gap-2 px-3 py-1.5 rounded-t-md border border-b-0",
                   f.id === activeId
-                    ? "bg-slate-700/70 text-white border-slate-600"
-                    : "bg-neutral-900/60 text-slate-300 border-slate-700 hover:bg-slate-700/50 hover:text-white"
+                    ? "bg-white/10 text-white border-white/20"
+                    : "bg-neutral-900/60 text-slate-300 border-white/10 hover:bg-white/5 hover:text-white"
                 )}
                 title={f.name}
               >
@@ -45,7 +45,7 @@ export default function Tabs({ files, activeId, onSelect, onClose, onAdd, analyz
           className="hidden"
           onChange={(e) => onAdd(Array.from(e.target.files || []))}
         />
-        <div className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-slate-800/70 border border-slate-700 hover:bg-slate-700 cursor-pointer">
+        <div className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-white/5 border border-white/10 hover:bg-white/10 cursor-pointer">
           <Plus size={14} /> New
         </div>
       </label>

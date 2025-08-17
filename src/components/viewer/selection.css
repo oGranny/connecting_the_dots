@@ -1,0 +1,29 @@
+/* viewer/selection.css */
+
+/* Never select containers/canvas/backgrounds */
+.react-pdf__Document,
+.react-pdf__Page,
+.react-pdf__Page canvas {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+/* IMPORTANT: do NOT allow selection on the whole text layer */
+.react-pdf__Page .react-pdf__Page__textContent,
+.react-pdf__Page .textLayer {
+  -webkit-user-select: none !important;
+  user-select: none !important;
+}
+
+/* Allow selection ONLY on the individual text spans */
+.react-pdf__Page .react-pdf__Page__textContent span,
+.react-pdf__Page .textLayer span {
+  -webkit-user-select: text !important;
+  user-select: text !important;
+}
+
+/* Keep selection boundary within a page (where supported) */
+.react-pdf__Page { user-select: contain; }
+
+/* Optional: disable link hitboxes during selection to avoid jumps */
+.react-pdf__Page .annotationLayer { pointer-events: none; }
