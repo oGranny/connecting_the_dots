@@ -1,14 +1,12 @@
 import os
 import re
 import uuid
-from typing import List, Dict, Any, Tuple
-
-import numpy as np
-try:
-    from sklearn.cluster import KMeans
-    _HAS_SKLEARN = True
-except Exception:
-    _HAS_SKLEARN = False
+import json
+import time
+import glob
+import threading
+from typing import List, Dict, Any, Tuple, Optional
+from queue import Queue
 
 from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
@@ -18,27 +16,67 @@ from outline_yolo import build_outline_for_file
 import fitz  # PyMuPDF
 from dotenv import load_dotenv
 
-load_dotenv()
-import os
+# --------- RAG deps ---------
+import numpy as np
 
-BACKEND_DIR = os.path.dirname(os.path.abspath(__file__))
-YOLO_MODEL = os.getenv(
-    "YOLO_MODEL",
-    os.path.join(BACKEND_DIR, "model", "model.pt")
-)
-print("Using YOLO model at:", YOLO_MODEL)
+try:
+    from google import genai
+    from google.genai import types
+except Exception:
+    genai = None
+    types = None
+
+load_dotenv()
+
+YOLO_MODEL = os.getenv("YOLO_MODEL", os.path.join(os.path.dirname(__file__), "model", "model.pt"))
 
 # ----------------- Config -----------------
 PORT = int(os.getenv("PORT", "4000"))
 FRONTEND_ORIGIN = os.getenv("FRONTEND_ORIGIN", "*")
-UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "uploads")
+BASE_DIR = os.path.dirname(__file__)
+UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 ALLOWED_MIME = {"application/pdf"}
 
+# ---------- RAG Config ----------
+RAG_DIR = os.getenv("RAG_OUT_DIR", os.path.join(BASE_DIR, "rag_index"))
+os.makedirs(RAG_DIR, exist_ok=True)
+
+# Models
+EMBED_MODEL = os.getenv("EMBED_MODEL_DEFAULT", "text-embedding-004")
+GEN_MODEL = os.getenv("GEN_MODEL_DEFAULT", "gemini-2.5-flash")
+
+# Dimensions & chunking
+EMBED_DIM = int(os.getenv("EMBED_DIM_DEFAULT", "768"))
+CHUNK_CHARS = int(os.getenv("CHUNK_CHARS_DEFAULT", "900"))
+CHUNK_OVERLAP = int(os.getenv("CHUNK_OVERLAP_DEFAULT", "150"))
+
+# Retrieval & generation
+TOP_K_DEFAULT = int(os.getenv("TOP_K_DEFAULT", "5"))
+TEMPERATURE = float(os.getenv("TEMPERATURE_DEFAULT", "0.2"))
+MAX_OUTPUT_TOKENS_DEFAULT = int(os.getenv("MAX_OUTPUT_TOKENS", "800"))
+
+# Context guardrails
+CTX_BUDGET_CHARS = int(os.getenv("CTX_BUDGET_CHARS", "4000"))
+CTX_SNIPPET_CHARS = int(os.getenv("CTX_SNIPPET_CHARS", "900"))
+
+# Embed batching/limits
+EMBED_BATCH = int(os.getenv("EMBED_BATCH", "100"))
+EMBED_RPS = float(os.getenv("EMBED_RPS", "0.5"))
+GEN_RPS = float(os.getenv("GEN_RPS", "0.2"))
+MAX_RETRIES = int(os.getenv("MAX_RETRIES", "8"))
+BASE_BACKOFF = float(os.getenv("BASE_BACKOFF", "1.5"))
+MAX_BACKOFF = float(os.getenv("MAX_BACKOFF", "20.0"))
+
+# Files
+VEC_PATH = os.path.join(RAG_DIR, "vectors.npy")
+META_PATH = os.path.join(RAG_DIR, "meta.jsonl")
+EMBED_CACHE_PATH = os.path.join(RAG_DIR, "embed_cache.jsonl")
+FILES_REG_PATH = os.path.join(RAG_DIR, "files_registry.json")  # {abs_pdf_path: {"mtime": float, "chunks": int}}
+
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": [FRONTEND_ORIGIN, "*"]}}, supports_credentials=True)
-
 
 # ----------------- Helpers -----------------
 def _save_pdf(file_storage) -> Dict[str, Any]:
@@ -56,16 +94,13 @@ def _save_pdf(file_storage) -> Dict[str, Any]:
         "mimetype": file_storage.mimetype,
     }
 
-
 def _open_doc(file_id: str) -> Tuple[fitz.Document, str]:
     path = os.path.join(UPLOAD_DIR, file_id)
     if not os.path.exists(path):
         raise FileNotFoundError("File not found")
     return fitz.open(path), path
 
-
 def _normalize_sizes(sizes: List[float], eps=0.6) -> List[float]:
-    # cluster similar sizes (e.g., 16.02 and 16.4 -> 16.2)
     sizes = sorted(set(round(s, 1) for s in sizes), reverse=True)
     out = []
     for s in sizes:
@@ -73,138 +108,60 @@ def _normalize_sizes(sizes: List[float], eps=0.6) -> List[float]:
             out.append(s)
     return out
 
-
-def _extract_headings(doc: fitz.Document, max_levels: int = 4) -> List[Dict[str, Any]]:
-    """
-    Heuristic: cluster font sizes into up to 4 groups and map:
-      largest center -> H1, next -> H2, ...
-    Returns [{id, level:int(1..4), title, page:int(1-based)}]
-    """
+def _extract_headings(doc: fitz.Document, max_levels: int = 3) -> List[Dict[str, Any]]:
     spans = []
-    sizes = []
-
+    all_sizes = []
     for pno in range(len(doc)):
         page = doc[pno]
         d = page.get_text("dict")
-        # pull y position too so we can sort correctly
         for block in d.get("blocks", []):
             for line in block.get("lines", []):
                 for span in line.get("spans", []):
                     text = (span.get("text") or "").strip()
                     if not text:
                         continue
-                    # very short noise
-                    if len(text) < 2:
+                    if len(text) < 3:
                         continue
-
                     size = float(span.get("size", 0))
-                    # keep bbox top (y1)
-                    bbox = span.get("bbox") or [0, 0, 0, 0]
-                    y_top = float(bbox[1]) if isinstance(bbox, (list, tuple)) and len(bbox) >= 2 else 0.0
-                    font = (span.get("font") or "").lower()
-
+                    all_sizes.append(size)
                     spans.append({
-                        "page": pno + 1,   # 1-based
+                        "page": pno + 1,
                         "text": text,
                         "size": size,
-                        "y": y_top,
-                        "font": font,
+                        "bbox": span.get("bbox"),
+                        "font": span.get("font"),
                     })
-                    sizes.append(size)
-
-    if not spans or not sizes:
+    if not spans:
         return []
-
-    sizes_arr = np.array(sizes, dtype=np.float32)
-    uniq = np.unique(np.round(sizes_arr, 2))
-    # number of clusters to attempt (cap by max_levels)
-    K = int(np.clip(len(uniq), 1, max_levels))
-
-    # If everything is truly one size, we can't infer hierarchy -> all H1
-    if K == 1:
-        results = []
-        seen_on_page = set()
-        for s in sorted(spans, key=lambda x: (x["page"], x["y"])):
-            title = re.sub(r"\s+", " ", s["text"]).strip()
-            if not title:
-                continue
-            key = (s["page"], title.lower())
-            if key in seen_on_page:
-                continue
-            seen_on_page.add(key)
-            results.append({
-                "id": uuid.uuid4().hex,
-                "level": 1,
-                "title": title if len(title) <= 140 else (title[:137] + "…"),
-                "page": s["page"],
-            })
-        return results
-
-    # Cluster sizes into K groups
-    if _HAS_SKLEARN and K >= 2:
-        km = KMeans(n_clusters=K, random_state=42, n_init=10)
-        labels = km.fit_predict(sizes_arr.reshape(-1, 1))
-        centers = km.cluster_centers_.ravel()
-    else:
-        # fallback: quantile binning
-        qs = np.quantile(sizes_arr, np.linspace(0, 1, K + 1))
-        labels = np.zeros_like(sizes_arr, dtype=int)
-        for i, s in enumerate(sizes_arr):
-            for b in range(K):
-                if qs[b] <= s <= qs[b + 1]:
-                    labels[i] = min(b, K - 1)
-                    break
-        centers = np.array([(sizes_arr[labels == b].mean() if np.any(labels == b) else 0.0) for b in range(K)])
-
-    # largest center -> H1, next -> H2, ...
-    order = np.argsort(centers)[::-1]  # indices of clusters from largest to smallest
-    cluster_to_level = {int(order[i]): i + 1 for i in range(K)}  # 1..K
-
-    # Build heading candidates, keep simple filters to reduce obvious body text:
-    # - Prefer bold-ish fonts or anything in larger clusters
-    # - Limit very long runs
-    items = []
-    for s, lab in zip(spans, labels):
-        lvl = int(cluster_to_level.get(int(lab), 4))
-        title = re.sub(r"\s+", " ", s["text"]).strip()
-        if not title:
-            continue
-        # mild filtering: if it's in smallest cluster (likely body) AND not bold, skip
-        if lvl >= min(K, 4) and "bold" not in s["font"]:
-            # still keep if the size is in top half clusters
-            if lvl > 2:
-                continue
-
-        items.append({
-            "page": s["page"],
-            "y": s["y"],
-            "title": title if len(title) <= 140 else (title[:137] + "…"),
-            "level": int(np.clip(lvl, 1, 4)),
-        })
-
-    if not items:
-        return []
-
-    # Sort by (page, vertical position)
-    items.sort(key=lambda x: (x["page"], x["y"], x["level"]))
-
-    # De-duplicate consecutive on the same page
+    top_sizes = _normalize_sizes(all_sizes)
+    levels = top_sizes[:max_levels]
     results = []
-    seen_on_page = set()
-    for it in items:
-        key = (it["page"], it["title"].lower())
-        if key in seen_on_page:
+    for s in spans:
+        try:
+            level = levels.index(min(levels, key=lambda L: abs(L - s["size"]))) + 1
+        except ValueError:
             continue
-        seen_on_page.add(key)
+        if s["size"] < levels[min(len(levels) - 1, 2)] - 0.2 and level > 2:
+            continue
+        title = re.sub(r"\s+", " ", s["text"]).strip()
+        if len(title) > 140:
+            title = title[:137] + "…"
         results.append({
             "id": uuid.uuid4().hex,
-            "level": it["level"],
-            "title": it["title"],
-            "page": it["page"],
+            "level": level,
+            "title": title,
+            "page": s["page"],
         })
-
-    return results
-
+    deduped = []
+    seen_on_page = set()
+    for h in results:
+        key = (h["page"], h["title"].lower())
+        if key in seen_on_page:
+            continue
+        deduped.append(h)
+        seen_on_page.add(key)
+    deduped.sort(key=lambda x: (x["page"], x["level"]))
+    return deduped
 
 def _search_pdf(doc: fitz.Document, query: str, limit: int = 10) -> List[Dict[str, Any]]:
     out = []
@@ -216,7 +173,6 @@ def _search_pdf(doc: fitz.Document, query: str, limit: int = 10) -> List[Dict[st
         rects = page.search_for(q)
         if not rects:
             continue
-
         txt = page.get_text("text")
         i = txt.lower().find(q.lower())
         if i == -1:
@@ -224,7 +180,6 @@ def _search_pdf(doc: fitz.Document, query: str, limit: int = 10) -> List[Dict[st
         else:
             start = max(0, i - 150)
             snippet = txt[start: i + len(q) + 150].replace("\n", " ").strip()
-
         out.append({
             "page": pno + 1,
             "count": len(rects),
@@ -234,12 +189,339 @@ def _search_pdf(doc: fitz.Document, query: str, limit: int = 10) -> List[Dict[st
             break
     return out
 
+# ----------------- RAG core -----------------
+def _ensure_genai():
+    if genai is None or types is None:
+        raise RuntimeError("google-genai not installed. pip install google-genai")
+    key = os.getenv("GOOGLE_API_KEY")
+    if not key:
+        raise RuntimeError("GOOGLE_API_KEY env var not set")
+    return genai.Client()
+
+class _RpsLimiter:
+    def __init__(self, rps: float):
+        self.min_interval = 1.0 / max(1e-6, rps)
+        self._last = 0.0
+        self._lock = threading.Lock()
+    def wait(self):
+        with self._lock:
+            now = time.time()
+            wait_for = self.min_interval - (now - self._last)
+            if wait_for > 0:
+                time.sleep(wait_for)
+            self._last = time.time()
+
+def _is_retryable(e: Exception) -> bool:
+    s = str(e).lower()
+    keys = ["429", "rate", "quota", "resourceexhausted", "exceeded", "retry", "temporarily"]
+    return any(k in s for k in keys)
+
+def _with_retry(fn, limiter: Optional[_RpsLimiter] = None):
+    last_err = None
+    for attempt in range(MAX_RETRIES + 1):
+        try:
+            if limiter:
+                limiter.wait()
+            return fn()
+        except Exception as e:
+            if not _is_retryable(e) or attempt == MAX_RETRIES:
+                last_err = e
+                break
+            sleep_s = min(MAX_BACKOFF, (BASE_BACKOFF * (2 ** attempt)))
+            time.sleep(sleep_s)
+    raise last_err
+
+_embed_limiter = _RpsLimiter(EMBED_RPS)
+_gen_limiter = _RpsLimiter(GEN_RPS)
+
+def _l2norm_rows(M: np.ndarray) -> np.ndarray:
+    n = np.linalg.norm(M, axis=1, keepdims=True)
+    n = np.maximum(n, 1e-12)
+    return M / n
+
+def _chunk_text(txt: str, max_chars: int, overlap: int) -> List[Tuple[str, int, int]]:
+    txt = txt or ""
+    n = len(txt)
+    if n == 0:
+        return []
+    out = []
+    i = 0
+    while i < n:
+        j = min(n, i + max_chars)
+        out.append((txt[i:j], i, j))
+        if j == n:
+            break
+        i = max(0, j - overlap)
+    return out
+
+def _extract_pdf_chunks(pdf_path: str, max_chars: int, overlap: int) -> List[Dict[str, Any]]:
+    rows: List[Dict[str, Any]] = []
+    try:
+        doc = fitz.open(pdf_path)
+        for page_idx, page in enumerate(doc):
+            text = page.get_text("text", sort=True)
+            for ch, s, e in _chunk_text(text, max_chars, overlap):
+                ch = ch[:CTX_SNIPPET_CHARS]
+                rows.append({
+                    "id": str(uuid.uuid4()),
+                    "pdf_path": os.path.abspath(pdf_path),
+                    "pdf_name": os.path.basename(pdf_path),
+                    "page": page_idx + 1,
+                    "start": int(s),
+                    "end": int(e),
+                    "text": ch,
+                })
+        doc.close()
+    except Exception as ex:
+        print(f"[WARN] Failed {pdf_path}: {ex}")
+    return rows
+
+def _hash_text(t: str) -> str:
+    import hashlib
+    return hashlib.sha1((t or "").encode("utf-8")).hexdigest()
+
+def _load_embed_cache(cache_fp: str) -> Dict[str, List[float]]:
+    cache = {}
+    if os.path.exists(cache_fp):
+        with open(cache_fp, "r", encoding="utf-8") as f:
+            for line in f:
+                try:
+                    row = json.loads(line)
+                    h = row.get("h")
+                    v = row.get("v")
+                    if isinstance(h, str) and isinstance(v, list):
+                        cache[h] = v
+                except Exception:
+                    continue
+    return cache
+
+def _append_embed_cache(cache_fp: str, items: List[Tuple[str, List[float]]]):
+    if not items:
+        return
+    with open(cache_fp, "a", encoding="utf-8") as f:
+        for h, v in items:
+            f.write(json.dumps({"h": h, "v": v}) + "\n")
+
+def _embed_texts(texts: List[str], model: str, dim: int, task_type: str, cache_fp: Optional[str]) -> np.ndarray:
+    if not texts:
+        return np.zeros((0, dim), dtype=np.float32)
+    client = _ensure_genai()
+    cache = _load_embed_cache(cache_fp) if cache_fp else {}
+    outM = np.zeros((len(texts), dim), dtype=np.float32)
+    todo_idxs, todo_texts, new_cache = [], [], []
+
+    for i, t in enumerate(texts):
+        h = _hash_text(t)
+        if h in cache:
+            v = np.array(cache[h], dtype=np.float32)
+            if v.shape[0] == dim:
+                outM[i] = v
+                continue
+        todo_idxs.append(i)
+        todo_texts.append(t)
+
+    for start in range(0, len(todo_texts), EMBED_BATCH):
+        end = min(start + EMBED_BATCH, len(todo_texts))
+        batch = todo_texts[start:end]
+        def _call():
+            return client.models.embed_content(
+                model=model,
+                contents=batch,
+                config=types.EmbedContentConfig(task_type=task_type, output_dimensionality=dim),
+            )
+        res = _with_retry(_call, limiter=_embed_limiter)
+        for j, e in enumerate(res.embeddings):
+            idx = todo_idxs[start + j]
+            vec = np.array(e.values, dtype=np.float32)
+            outM[idx] = vec
+            if cache is not None:
+                new_cache.append((_hash_text(texts[idx]), vec.astype(float).tolist()))
+    if cache_fp and new_cache:
+        _append_embed_cache(cache_fp, new_cache)
+    return outM
+
+def _make_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
+    used = 0
+    parts = []
+    for c in contexts:
+        t = c['text'][:CTX_SNIPPET_CHARS]
+        if used + len(t) > CTX_BUDGET_CHARS:
+            break
+        used += len(t)
+        parts.append(f"[{c['rank']}] {c['pdf_name']} p.{c['page']} ({c['start']}-{c['end']}):\n{t}")
+    ctx = "\n\n".join(parts)
+    head = (
+        "Answer strictly from the provided PDF excerpts.\n"
+        "If the answer is not present, say you don't know.\n"
+        "Cite source numbers like [1], [2] inline.\n"
+    )
+    return f"{head}\n\nQUESTION:\n{query}\n\nCONTEXTS:\n{ctx}\n\nAnswer:"
+
+def _generate_answer(query: str, contexts: List[Dict[str, Any]], model: str, temperature: float) -> str:
+    client = _ensure_genai()
+    prompt = _make_prompt(query, contexts)
+    def _call():
+        return client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(temperature=temperature, max_output_tokens=MAX_OUTPUT_TOKENS_DEFAULT),
+        )
+    resp = _with_retry(_call, limiter=_gen_limiter)
+    return (getattr(resp, "text", None) or "").strip()
+
+# --------- RAG Index manager (persistent, incremental) ----------
+class RAGIndex:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.V: Optional[np.ndarray] = None
+        self.metas: List[Dict[str, Any]] = []
+        self.files_reg: Dict[str, Dict[str, Any]] = {}
+        self.is_indexing = False
+        self.last_updated = None
+        self._load_from_disk()
+
+    def _load_from_disk(self):
+        # load metas
+        if os.path.exists(META_PATH):
+            with open(META_PATH, "r", encoding="utf-8") as f:
+                self.metas = [json.loads(line) for line in f if line.strip()]
+        else:
+            self.metas = []
+        # load vectors
+        if os.path.exists(VEC_PATH):
+            self.V = np.load(VEC_PATH)
+        else:
+            self.V = np.zeros((0, EMBED_DIM), dtype=np.float32)
+        # files registry
+        if os.path.exists(FILES_REG_PATH):
+            with open(FILES_REG_PATH, "r", encoding="utf-8") as f:
+                self.files_reg = json.load(f)
+        else:
+            self.files_reg = {}
+        if self.metas and self.V is not None:
+            self.last_updated = time.time()
+
+    def _save_registry(self):
+        with open(FILES_REG_PATH, "w", encoding="utf-8") as f:
+            json.dump(self.files_reg, f, indent=2)
+
+    def _append_index(self, new_metas: List[Dict[str, Any]], new_vecs: np.ndarray):
+        # Append to in-memory
+        self.metas.extend(new_metas)
+        if self.V is None or self.V.size == 0:
+            self.V = new_vecs.copy()
+        else:
+            self.V = np.vstack([self.V, new_vecs])
+        # Persist
+        with open(META_PATH, "a", encoding="utf-8") as f:
+            for r in new_metas:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        np.save(VEC_PATH, self.V)
+        self.last_updated = time.time()
+
+    def _extract_and_embed(self, pdf_paths: List[str]) -> Tuple[List[Dict[str, Any]], np.ndarray]:
+        rows: List[Dict[str, Any]] = []
+        for p in pdf_paths:
+            rows.extend(_extract_pdf_chunks(p, CHUNK_CHARS, CHUNK_OVERLAP))
+        texts = [r["text"] for r in rows]
+        M = _embed_texts(texts, EMBED_MODEL, EMBED_DIM, "RETRIEVAL_DOCUMENT", cache_fp=EMBED_CACHE_PATH)
+        M = _l2norm_rows(M)
+        return rows, M
+
+    def index_pdfs(self, pdf_paths: List[str]):
+        if not pdf_paths:
+            return
+        with self.lock:
+            self.is_indexing = True
+        try:
+            # filter unchanged by mtime
+            paths_to_index = []
+            for p in pdf_paths:
+                ap = os.path.abspath(p)
+                if not os.path.exists(ap):
+                    continue
+                mt = os.path.getmtime(ap)
+                rec = self.files_reg.get(ap)
+                if (rec is None) or (abs(rec.get("mtime", 0.0) - mt) > 1e-6):
+                    paths_to_index.append(ap)
+            if not paths_to_index:
+                return
+            rows, M = self._extract_and_embed(paths_to_index)
+            if rows:
+                self._append_index(rows, M)
+            # update registry counts by file
+            by_file = {}
+            for r in rows:
+                by_file.setdefault(r["pdf_path"], 0)
+                by_file[r["pdf_path"]] += 1
+            for ap in paths_to_index:
+                self.files_reg[ap] = {"mtime": os.path.getmtime(ap), "chunks": by_file.get(ap, 0)}
+            self._save_registry()
+        finally:
+            with self.lock:
+                self.is_indexing = False
+
+    def index_all_in_uploads(self):
+        pdfs = sorted(glob.glob(os.path.join(UPLOAD_DIR, "*.pdf")))
+        self.index_pdfs(pdfs)
+
+    def topk_search(self, q: str, k: int) -> List[Dict[str, Any]]:
+        if self.V is None or self.V.shape[0] == 0:
+            return []
+        Q = _embed_texts([q], EMBED_MODEL, EMBED_DIM, "QUESTION_ANSWERING", cache_fp=None)
+        if Q.shape[0] == 0:
+            return []
+        qv = Q[0]
+        qv = qv / (np.linalg.norm(qv) + 1e-12)
+        sims = self.V @ qv
+        if k > len(sims):
+            k = len(sims)
+        idxs = np.argpartition(-sims, k-1)[:k]
+        idxs = idxs[np.argsort(-sims[idxs])]
+        out: List[Dict[str, Any]] = []
+        for rank, i in enumerate(idxs, start=1):
+            m = self.metas[i]
+            txt = (m["text"] or "")[:CTX_SNIPPET_CHARS]
+            out.append({
+                "rank": rank,
+                "score": float(sims[i]),
+                "pdf_name": m["pdf_name"],
+                "pdf_path": m["pdf_path"],
+                "page": m["page"],
+                "start": m["start"],
+                "end": m["end"],
+                "text": txt,
+                "chunk_id": m.get("id"),
+            })
+        return out
+
+    def answer(self, q: str, top_k: int) -> Dict[str, Any]:
+        hits = self.topk_search(q, top_k)
+        if not hits:
+            return {
+                "answer": "I couldn't find relevant information in the PDFs.",
+                "contexts": [],
+                "model": GEN_MODEL,
+                "embedding_model": EMBED_MODEL,
+            }
+        ans = _generate_answer(q, hits, GEN_MODEL, TEMPERATURE)
+        return {
+            "answer": ans,
+            "contexts": hits,
+            "model": GEN_MODEL,
+            "embedding_model": EMBED_MODEL,
+        }
+
+rag = RAGIndex()
+
+def _index_async(paths: List[str]):
+    t = threading.Thread(target=rag.index_pdfs, args=(paths,), daemon=True)
+    t.start()
 
 # ----------------- Routes -----------------
 @app.get("/api/health")
 def health():
     return jsonify({"ok": True})
-
 
 @app.post("/api/outline-yolo")
 def outline_yolo():
@@ -252,7 +534,6 @@ def outline_yolo():
     if not os.path.exists(pdf_path):
         return jsonify({"error": "file-not-found", "detail": f"PDF not found: {pdf_path}"}), 404
 
-    # NEW: explicit model check with absolute path in error
     if not os.path.exists(YOLO_MODEL):
         return jsonify({
             "error": "model-missing",
@@ -266,22 +547,30 @@ def outline_yolo():
     except Exception as e:
         return jsonify({"error": "outline-failed", "detail": str(e)}), 500
 
-
 @app.post("/api/upload")
 def upload():
+    saved_paths = []
     if "file" in request.files:
         file = request.files["file"]
         meta = _save_pdf(file)
+        saved_paths.append(os.path.join(UPLOAD_DIR, meta["id"]))
+        # fire-and-forget indexing of this PDF
+        _index_async(saved_paths)
         return jsonify(meta)
 
-    # also support multiple: files[]
     files = request.files.getlist("files[]")
     if not files:
         return jsonify({"error": "No file(s) provided"}), 400
 
-    metas = [_save_pdf(f) for f in files]
-    return jsonify({"files": metas})
+    metas = []
+    for f in files:
+        m = _save_pdf(f)
+        metas.append(m)
+        saved_paths.append(os.path.join(UPLOAD_DIR, m["id"]))
 
+    # background index for all uploaded PDFs
+    _index_async(saved_paths)
+    return jsonify({"files": metas})
 
 @app.get("/api/files")
 def list_files():
@@ -299,7 +588,6 @@ def list_files():
         })
     return jsonify(items)
 
-
 @app.get("/uploads/<path:filename>")
 def serve_upload(filename):
     resp = send_from_directory(UPLOAD_DIR, filename, mimetype="application/pdf")
@@ -309,98 +597,20 @@ def serve_upload(filename):
     resp.headers["Cache-Control"] = "no-store"
     return resp
 
-
 @app.post("/api/headings")
 def headings():
-    """
-    Returns headings in a flat, ordered list:
-      { ok: true, data: [{id, level:1..4, title, page:1..N}, ...], headings: [...] }
-
-    Source priority (explicit):
-    - prefer="yolo"  -> run YOLO outline (can be slow)
-    - prefer!="yolo" -> fast PyMuPDF heuristic fallback
-    """
     data = request.get_json(force=True, silent=True) or {}
     file_id = data.get("id")
-    prefer = (data.get("prefer") or "").strip().lower()  # "yolo" to force YOLO, anything else -> heuristic
-
     if not file_id:
-        return jsonify({"ok": False, "error": "Provide uploaded file 'id'"}), 400
-
+        return jsonify({"error": "Provide uploaded file 'id'"}), 400
     try:
-        doc, pdf_path = _open_doc(file_id)
-
-        items = []
-
-        # Choose source explicitly
-        if prefer == "yolo" and os.path.exists(YOLO_MODEL):
-            try:
-                yolo_out = build_outline_for_file(pdf_path, model_path=YOLO_MODEL, dpi=200) or {}
-                # expecting {"title": "...", "outline": [{"level": "H2"/2, "text"/"title": "...", "page": 0-based}, ...]}
-                items = list(yolo_out.get("outline") or [])
-            except Exception:
-                # if YOLO fails, fallback to heuristic immediately
-                items = []
-
-        if not items:
-            # Fast heuristic (PyMuPDF): [{id, level:int, title, page:1..N}]
-            hs = _extract_headings(doc)
-            # adapt to uniform normalization below (temporarily make page 0-based)
-            items = [{"level": h["level"], "title": h["title"], "page": h["page"] - 1} for h in hs]
-
-        # --- keep incoming order; normalize to {id, level:1..4, title, page:1..N} ---
-        norm = []
-        seen = set()
-        for it in items:
-            title = (it.get("title") or it.get("text") or it.get("name") or "").strip()
-            if not title:
-                continue
-
-            raw_page = it.get("page") or it.get("page_num") or it.get("p") or 0
-            try:
-                page0 = int(raw_page)
-            except Exception:
-                page0 = 0
-            page = max(1, page0 + 1)  # convert 0-based -> 1-based
-
-            lv_raw = it.get("level") or it.get("depth") or it.get("h_level") or it.get("tag") or 1
-            if isinstance(lv_raw, str):
-                s = lv_raw.strip().lower()
-                if s.startswith("h") and s[1:].isdigit():
-                    lvl = int(s[1:])
-                else:
-                    try:
-                        lvl = int(s)
-                    except Exception:
-                        lvl = 1
-            else:
-                try:
-                    lvl = int(lv_raw)
-                except Exception:
-                    lvl = 1
-
-            # clamp to H1..H4 so the UI can indent consistently
-            lvl = max(1, min(4, lvl))
-
-            key = (page, lvl, title.lower())
-            if key in seen:
-                continue
-            seen.add(key)
-
-            norm.append({
-                "id": uuid.uuid4().hex,
-                "level": lvl,
-                "title": title,
-                "page": page,
-            })
-
-        # Return both "data" and "headings" (compat with older client code)
-        return jsonify({"ok": True, "data": norm, "headings": norm})
+        doc, _ = _open_doc(file_id)
+        hs = _extract_headings(doc)
+        return jsonify({"headings": hs})
     except FileNotFoundError:
-        return jsonify({"ok": False, "error": "File not found"}), 404
+        return jsonify({"error": "File not found"}), 404
     except Exception as e:
-        return jsonify({"ok": False, "error": "failed", "detail": str(e)}), 500
-
+        return jsonify({"error": "failed", "detail": str(e)}), 500
 
 @app.post("/api/search")
 def search():
@@ -410,7 +620,6 @@ def search():
     limit = int(data.get("limit", 10))
     if not file_id or not query:
         return jsonify({"error": "Provide 'id' and 'query'"}), 400
-
     try:
         doc, _ = _open_doc(file_id)
         hits = _search_pdf(doc, query, limit=limit)
@@ -420,21 +629,12 @@ def search():
     except Exception as e:
         return jsonify({"error": "failed", "detail": str(e)}), 500
 
-
 @app.post("/api/analyze")
 def analyze():
-    """
-    Stub that returns shape the UI expects:
-      - insights (title, body)
-      - facts (text)
-      - connections (text, jump:{page})
-      - related (docName, page, title, snippet)
-    """
     data = request.get_json(force=True, silent=True) or {}
     persona = data.get("persona", "Student")
     jtbd = data.get("jtbd", "Study key concepts")
     ids = data.get("ids", [])
-
     insights = [
         {"id": uuid.uuid4().hex, "title": "Separate kinetics from thermodynamics",
          "body": "Focus on rate laws and mechanisms; thermodynamics explains feasibility, not speed."},
@@ -449,11 +649,10 @@ def analyze():
         {"id": uuid.uuid4().hex, "text": "Observed rate law aligns with slow (rate-determining) elementary step.",
          "jump": {"page": 6}}
     ]
-
     related = []
     for fid in ids[:1]:
         try:
-            _, _ = _open_doc(fid)
+            doc, _ = _open_doc(fid)
             name = fid.split("_", 1)[-1]
             related.extend([
                 {"id": uuid.uuid4().hex, "docName": name, "page": 2, "title": "Rate Laws",
@@ -463,22 +662,53 @@ def analyze():
             ])
         except Exception:
             pass
-
     return jsonify({
         "persona": persona, "jtbd": jtbd,
         "insights": insights, "facts": facts, "connections": connections, "related": related
     })
 
+# ---------- NEW: RAG endpoints ----------
+@app.get("/api/rag/status")
+def rag_status():
+    return jsonify({
+        "chunks": int(0 if rag.V is None else rag.V.shape[0]),
+        "dim": EMBED_DIM,
+        "isIndexing": rag.is_indexing,
+        "lastUpdated": rag.last_updated,
+        "embedModel": EMBED_MODEL,
+        "genModel": GEN_MODEL,
+    })
+
+@app.post("/api/rag/index")
+def rag_index_now():
+    # Manual trigger to (re)index everything in uploads
+    _index_async(sorted(glob.glob(os.path.join(UPLOAD_DIR, "*.pdf"))))
+    return jsonify({"ok": True})
+
+@app.post("/api/rag/query")
+def rag_query():
+    data = request.get_json(force=True, silent=True) or {}
+    q = (data.get("q") or "").strip()
+    top_k = int(data.get("top_k", TOP_K_DEFAULT))
+    if not q:
+        return jsonify({"error": "Provide 'q'"}), 400
+    try:
+        resp = rag.answer(q, top_k)
+        # include a hint if indexing is ongoing or empty
+        meta = {
+            "isIndexing": rag.is_indexing,
+            "chunks": int(0 if rag.V is None else rag.V.shape[0]),
+        }
+        resp["_meta"] = meta
+        return jsonify(resp)
+    except Exception as e:
+        return jsonify({"error": "rag-failed", "detail": str(e)}), 500
 
 @app.post("/api/podcast")
 def podcast():
-    """
-    Returns a simple script for 2–5 minute narration (UI can TTS it or stream later).
-    """
     data = request.get_json(force=True, silent=True) or {}
     topic = data.get("topic", "Reaction Kinetics")
     length = data.get("length", "3 min")
-
     script = (
         f"Welcome to a quick micro-podcast on {topic}. "
         "We’ll start with why kinetics matters: it tells you how fast reactions proceed… "
@@ -488,7 +718,6 @@ def podcast():
         "That’s your crash course! Good luck with your prep."
     )
     return jsonify({"topic": topic, "length": length, "script": script, "audio_url": None})
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)
