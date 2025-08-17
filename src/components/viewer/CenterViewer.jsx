@@ -93,6 +93,11 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     setDocError(null);
   }, [activeFile?.id]);
 
+  // Clear per-page refs whenever the active file changes to avoid observing stale nodes
+  useEffect(() => {
+    pageRefs.current = {};
+  }, [activeFile?.id]);
+
   // Measure scroll viewport
   useLayoutEffect(() => {
     const el = scrollRef.current;
@@ -145,24 +150,38 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   // Track page in view (continuous)
   useEffect(() => {
     if (viewMode !== "continuous" || !numPages) return;
-    const els = Object.values(pageRefs.current || {});
+
+    // Only keep actual Elements (filters out null/undefined)
+    const all = Object.values(pageRefs.current || {});
+    const els = all.filter((n) => n && n.nodeType === 1);
+
     if (!els.length) return;
+
+    const rootEl = (scrollRef.current && scrollRef.current.nodeType === 1) ? scrollRef.current : null;
 
     const io = new IntersectionObserver(
       (entries) => {
         let best = { ratio: 0, page: currPage };
         for (const e of entries) {
-          const p = Number(e.target.dataset.page);
-          const r = e.intersectionRatio;
+          const dataPage = e.target?.dataset?.page;
+          const p = Number(dataPage);
+          const r = e.intersectionRatio || 0;
+          if (!Number.isFinite(p)) continue;
           if (r > best.ratio) best = { ratio: r, page: p };
         }
         if (best.page && best.page !== currPage) setCurrPage(best.page);
       },
-      { root: scrollRef.current, threshold: thresholds() }
+      { root: rootEl, threshold: thresholds() }
     );
-    els.forEach((el) => io.observe(el));
+
+    els.forEach((el) => {
+      try {
+        io.observe(el);
+      } catch {}
+    });
+
     return () => io.disconnect();
-  }, [viewMode, numPages, pageWidth]);
+  }, [viewMode, numPages, pageWidth, currPage]);
 
   // Helpers
   const zoomIn = () => setZoom((z) => clamp(Math.round((z + 0.1) * 10) / 10, 0.25, 4));
@@ -352,7 +371,18 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
                 {Array.from({ length: numPages || 0 }, (_, i) => {
                   const p = i + 1;
                   return (
-                    <div key={`p-${p}`} data-page={p} ref={(el) => (pageRefs.current[p] = el || undefined)} className="mb-6">
+                    <div
+                      key={`p-${p}`}
+                      data-page={p}
+                      ref={(el) => {
+                        if (el) {
+                          pageRefs.current[p] = el;
+                        } else {
+                          delete pageRefs.current[p];
+                        }
+                      }}
+                      className="mb-6"
+                    >
                       <PDFPage
                         scrollRef={scrollRef}
                         pageNumber={p}
