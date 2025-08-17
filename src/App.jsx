@@ -18,6 +18,10 @@ export default function App() {
   const left = useDragResize({ initial: 260, min: 200, max: 420 });
   const right = useDragResize({ initial: 260, min: 280, max: 560, invert: true });
 
+  // Pane visibility state
+  const [leftVisible, setLeftVisible] = useState(true);
+  const [rightVisible, setRightVisible] = useState(true);
+
   const [files, setFiles] = useState([]);                 // {id, name, url, file, serverId, size}
   const [activeId, setActiveId] = useState(null);
 
@@ -216,23 +220,62 @@ export default function App() {
       </div> */}
 
       {/* main body (subtract TOP: 3rem and BOTTOM: 2rem) */}
-      <div className="h-[calc(100%-3rem-2rem)] w-full flex grow overflow-hidden">
+      <div className="h-[calc(100%-3rem-2rem)] w-full flex grow overflow-hidden relative">
+        {/* overlay restore buttons when panes are hidden */}
+        {!leftVisible && (
+          <button
+            type="button"
+            aria-label="Show left pane"
+            title="Show left pane"
+            onClick={() => setLeftVisible(true)}
+            className="absolute left-2 top-1/2 -translate-y-1/2 z-50 w-8 h-8 grid place-items-center rounded-full border border-white/20 bg-black/60 hover:bg-white/10 text-white/90 shadow-md"
+          >
+            &gt;
+          </button>
+        )}
+        {!rightVisible && (
+          <button
+            type="button"
+            aria-label="Show right pane"
+            title="Show right pane"
+            onClick={() => setRightVisible(true)}
+            className="absolute right-2 top-1/2 -translate-y-1/2 z-50 w-8 h-8 grid place-items-center rounded-full border border-white/20 bg-black/60 hover:bg-white/10 text-white/90 shadow-md"
+          >
+            &lt;
+          </button>
+        )}
         {/* left sidebar */}
-        <div style={{ width: left.width }} className="h-full border-r border-neutral-800 bg-black/60 flex flex-col">
-          <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
-            <Sidebar
-              headings={activeHeadings.filter((h) => !h.hidden)}
-              status={activeStatus}
-              onJumpToHeading={(page) => viewerApiRef.current?.gotoPage?.(page)}
-              onFilter={handleFilter}
-            />
+        {leftVisible && (
+          <div style={{ width: left.width }} className="h-full border-r border-neutral-800 bg-black/60 flex flex-col relative">
+            <button
+              type="button"
+              aria-label="Hide left pane"
+              title="Hide left pane"
+              onClick={() => setLeftVisible(false)}
+              className="absolute top-1/2 -translate-y-1/2 -right-10 z-50 w-8 h-8 grid place-items-center rounded-full border border-white/20 bg-black/60 hover:bg-white/10 text-white/90 shadow-md"
+            >
+              &lt;
+            </button>
+            <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar">
+              <Sidebar
+                headings={activeHeadings.filter((h) => !h.hidden)}
+                status={activeStatus}
+                onJumpToHeading={(page) => viewerApiRef.current?.gotoPage?.(page)}
+                onFilter={handleFilter}
+                files={files}
+                activeFileId={activeId}
+                onSelectFileId={setActiveId}
+              />
+            </div>
           </div>
-        </div>
+        )}
 
         {/* left handle */}
-        <div onMouseDown={left.startDrag} title="Drag to resize" className="w-2 border-r-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
-          <div className="w-1 h-10 rounded bg-slate-700" />
-        </div>
+        {leftVisible && (
+          <div onMouseDown={left.startDrag} title="Drag to resize" className="w-2 border-r-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
+            <div className="w-1 h-10 rounded bg-slate-700" />
+          </div>
+        )}
 
         {/* center viewer */}
         <div ref={dropRef} className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -259,9 +302,20 @@ export default function App() {
         </div>
 
         {/* right chat */}
-        <div style={{ width: right.width }} className="h-full min-h-0 border-l border-slate-800 bg-slate-900/60 flex flex-col">
-          <ChatPanel activeFile={activeFile} />
-        </div>
+        {rightVisible && (
+          <div style={{ width: right.width }} className="h-full min-h-0 border-l border-slate-800 bg-slate-900/60 flex flex-col relative">
+            <button
+              type="button"
+              aria-label="Hide right pane"
+              title="Hide right pane"
+              onClick={() => setRightVisible(false)}
+              className="absolute top-1/2 -translate-y-1/2 -left-10 z-50 w-8 h-8 grid place-items-center rounded-full border border-white/20 bg-black/60 hover:bg-white/10 text-white/90 shadow-md"
+            >
+              &gt;
+            </button>
+            <ChatPanel activeFile={activeFile} />
+          </div>
+        )}
       </div>
 
       {/* bottom status bar */}
