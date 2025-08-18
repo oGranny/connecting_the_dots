@@ -15,6 +15,7 @@ export default function PDFPage({
   highlights,
   onAddHighlight,
   onAnchor,
+  penColor,
 }) {
   const layerRef = useRef(null);
   const canvasRef = useRef(null);
@@ -48,7 +49,7 @@ export default function PDFPage({
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.lineWidth = (s.size ?? brushSize) * dpr;
-      ctx.strokeStyle = "#e5e7eb";
+      ctx.strokeStyle = s.color ?? "#e5e7eb";
       ctx.stroke();
     }
   }, [strokes, dpr]);
@@ -78,7 +79,7 @@ export default function PDFPage({
       const a = strokePts.current[n - 2], b = strokePts.current[n - 1];
       ctx.beginPath();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.lineWidth = brushSize * dpr; ctx.strokeStyle = "#e5e7eb";
+      ctx.lineWidth = brushSize * dpr; ctx.strokeStyle = penColor || "#e5e7eb";
       ctx.moveTo(a.x * cvs.width, a.y * cvs.height);
       ctx.lineTo(b.x * cvs.width, b.y * cvs.height);
       ctx.stroke();
@@ -90,7 +91,7 @@ export default function PDFPage({
     const pts = strokePts.current.slice();
     strokePts.current = [];
     if (pts.length < 2) return;
-    onAddStroke({ pts, size: brushSize });
+    onAddStroke({ pts, size: brushSize, color: penColor });
   };
 
   return (

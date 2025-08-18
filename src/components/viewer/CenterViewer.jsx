@@ -46,6 +46,8 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
 
   // Tools
   const [tool, setTool] = useState("select"); // "select" | "hand" | "draw" | "highlight"
+  const [penColor, setPenColor] = useState("#ef4444"); // default red
+  const PEN_COLORS = ["#ef4444", "#22c55e", "#eab308", "#3b82f6", "#a855f7"]; // red, green, yellow, blue, purple
   const isDraw = tool === "draw";
 
   // Per-page data
@@ -229,6 +231,19 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
               icon={<Pencil size={16} />}
               label="Draw"
             />
+            {tool === "draw" && (
+              <div className="flex items-center gap-2 pl-2 pr-3">
+                {PEN_COLORS.map((c) => (
+                  <button
+                    key={c}
+                    onClick={() => setPenColor(c)}
+                    title={c}
+                    className={`h-5 w-5 rounded-full border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/30 ${penColor === c ? "ring-2 ring-white/70" : ""}`}
+                    style={{ backgroundColor: c }}
+                  />
+                ))}
+              </div>
+            )}
           </Segment>
 
           <Segment title="Zoom">
@@ -298,6 +313,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
                       pageWidth={pageWidth}
                       onFirstPageLoad={p === 1 ? onFirstPageLoad : undefined}
                       tool={tool}
+                      penColor={penColor}
                       dpr={dpr}
                       strokes={strokesByPage[p] || []}
                       onAddStroke={(s) => addStroke(p, s)}
