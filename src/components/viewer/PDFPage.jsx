@@ -12,6 +12,7 @@ export default function PDFPage({
   dpr,
   strokes,
   onAddStroke,
+  onEraseAt,
   highlights,
   onAddHighlight,
   onAnchor,
@@ -21,7 +22,9 @@ export default function PDFPage({
   const canvasRef = useRef(null);
 
   const isDraw = tool === "draw";
+  const isErase = tool === "erase";
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isErasing, setIsErasing] = useState(false);
   const strokePts = useRef([]);
   const brushSize = 2;
 
@@ -62,16 +65,24 @@ export default function PDFPage({
   };
 
   const handlePointerDown = (e) => {
-    if (!isDraw) return;
+    if (!isDraw && !isErase) return;
     const cvs = canvasRef.current;
     if (!cvs) return;
-    setIsDrawing(true);
+    if (isDraw) setIsDrawing(true);
+    if (isErase) setIsErasing(true);
     cvs.setPointerCapture?.(e.pointerId);
     strokePts.current = [clientToRel(e, cvs)];
   };
   const handlePointerMove = (e) => {
-    if (!isDraw || !isDrawing) return;
+    if (!isDraw && !isErase) return;
     const cvs = canvasRef.current; if (!cvs) return;
+    if (isErase && isErasing) {
+      const pt = clientToRel(e, cvs);
+      const radiusRel = (brushSize * dpr * 3) / Math.min(cvs.width, cvs.height); // a bit larger than brush
+      onEraseAt?.(pt, radiusRel);
+      return;
+    }
+    if (!isDrawing) return;
     strokePts.current.push(clientToRel(e, cvs));
     const ctx = cvs.getContext("2d");
     const n = strokePts.current.length;
@@ -86,7 +97,8 @@ export default function PDFPage({
     }
   };
   const handlePointerUp = () => {
-    if (!isDraw) return;
+    if (!isDraw && !isErase) return;
+    if (isErase) { setIsErasing(false); return; }
     setIsDrawing(false);
     const pts = strokePts.current.slice();
     strokePts.current = [];
