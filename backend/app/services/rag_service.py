@@ -138,7 +138,6 @@ def make_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
     head = (
         "Answer strictly from the provided PDF excerpts.\n"
         "If the answer is not present, say you don't know.\n"
-        "Cite source numbers like [1], [2] inline.\n"
     )
     return f"{head}\n\nQUESTION:\n{query}\n\nCONTEXTS:\n{ctx}\n\nAnswer:"
 
