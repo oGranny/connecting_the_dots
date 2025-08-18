@@ -66,6 +66,8 @@ export default function PDFPage({
 
   const handlePointerDown = (e) => {
     if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
     const cvs = canvasRef.current;
     if (!cvs) return;
     if (isDraw) setIsDrawing(true);
@@ -75,6 +77,8 @@ export default function PDFPage({
   };
   const handlePointerMove = (e) => {
     if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
     const cvs = canvasRef.current; if (!cvs) return;
     if (isErase && isErasing) {
       const pt = clientToRel(e, cvs);
@@ -96,8 +100,10 @@ export default function PDFPage({
       ctx.stroke();
     }
   };
-  const handlePointerUp = () => {
+  const handlePointerUp = (e) => {
     if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
     if (isErase) { setIsErasing(false); return; }
     setIsDrawing(false);
     const pts = strokePts.current.slice();
@@ -109,7 +115,7 @@ export default function PDFPage({
   return (
     <div
       ref={layerRef}
-      className={`relative rounded-xl shadow-sm ring-1 ring-black/10 overflow-hidden ${tool === "hand" ? "select-none" : ""}`}
+      className={`relative rounded-xl shadow-sm ring-1 ring-black/10 overflow-hidden ${(isDraw || isErase) ? "select-none" : ""}`}
       style={{ width: pageWidth }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -126,7 +132,7 @@ export default function PDFPage({
 
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 ${isDraw ? "pointer-events-auto" : "pointer-events-none"}`}
+        className={`absolute inset-0 ${(isDraw || isErase) ? "pointer-events-auto" : "pointer-events-none"}`}
       />
 
       <div className="absolute inset-0 pointer-events-none">
