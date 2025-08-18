@@ -7,7 +7,6 @@ export default function PDFPage({
   scrollRef,
   pageNumber,
   pageWidth,
-  renderWidth,
   onFirstPageLoad,
   tool,
   dpr,
@@ -57,29 +56,8 @@ export default function PDFPage({
   useLayoutEffect(() => { rerenderCanvas(); }, [pageWidth, strokes, rerenderCanvas]);
 
   const clientToRel = (e, el) => {
-    // When PinchZoom applies a CSS transform, getBoundingClientRect() reflects
-    // the transformed size while el.clientWidth/clientHeight are the untransformed layout size.
-    // Convert client coords back to the untransformed coordinate system so the
-    // canvas (which is sized using clientWidth/clientHeight) receives correct normalized points.
     const r = el.getBoundingClientRect();
-    const unscaledW = el.clientWidth || r.width;
-    const unscaledH = el.clientHeight || r.height;
-    const scaleX = r.width / unscaledW || 1;
-    const scaleY = r.height / unscaledH || 1;
-    
-    // Get the actual coordinates inside the element's bounding rect
-    const xInBounds = e.clientX - r.left;
-    const yInBounds = e.clientY - r.top;
-    
-    // Transform coordinates back to unscaled space
-    const xUnscaled = xInBounds / scaleX;
-    const yUnscaled = yInBounds / scaleY;
-    
-    // Normalize to 0-1 range and clamp
-    return { 
-      x: clamp(xUnscaled / unscaledW, 0, 1), 
-      y: clamp(yUnscaled / unscaledH, 0, 1) 
-    };
+    return { x: clamp((e.clientX - r.left) / r.width, 0, 1), y: clamp((e.clientY - r.top) / r.height, 0, 1) };
   };
 
   const handlePointerDown = (e) => {
@@ -126,19 +104,11 @@ export default function PDFPage({
     >
       <Page
         pageNumber={pageNumber}
-        width={renderWidth || pageWidth}
+        width={pageWidth}
         renderTextLayer
         renderAnnotationLayer={false}
         renderMode="svg"
         onLoadSuccess={pageNumber === 1 && onFirstPageLoad ? onFirstPageLoad : undefined}
-        // The following line improves PDF render quality especially during zooming
-        className="transition-[filter] duration-100" 
-        // The following styles avoid blurry text during fast zoom operations
-        style={{ 
-          imageRendering: 'auto',
-          fontSmoothing: 'antialiased',
-          textRendering: 'optimizeLegibility'
-        }}
       />
 
       <canvas

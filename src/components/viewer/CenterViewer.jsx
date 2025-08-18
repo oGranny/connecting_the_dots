@@ -12,8 +12,6 @@ import {
   ZoomOut,
   RotateCcw,
   Pencil,
-  CornerUpLeft,
-  Trash2,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -25,7 +23,6 @@ import { clamp, thresholds } from "./utils/geometry";
 import useZoomInteractions from "./hooks/useZoomInteractions";
 import usePanDrag from "./hooks/usePanDrag";
 import useBlockBrowserCtrlZoom from "./hooks/useBlockBrowserCtrlZoom";
-import PinchZoom from "./PinchZoom";
 
 // Keep worker version in lock-step with the API
 const v = pdfjs.version;
@@ -41,23 +38,6 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   const [fitMode, setFitMode] = useState("width");        // "width" | "page"
   const [zoom, setZoom] = useState(1);
   const [docError, setDocError] = useState(null);
-
-  // Pinch state (for % display & resetting)
-  const [pinchScale, setPinchScale] = useState(1);
-  const [pzKey, setPzKey] = useState(0); // bump to reset all PinchZooms
-  const [renderBoost, setRenderBoost] = useState(1);
-
-  // Throttle render boost updates while pinching to reduce blur without heavy re-renders
-  useEffect(() => {
-    let t = null;
-    // only boost up to 2.5x to limit work but provide better quality
-    const target = Math.max(1, Math.min(2.5, pinchScale));
-    // More responsive boost updates with a smaller threshold
-    if (Math.abs(target - renderBoost) > 0.01) {
-      t = setTimeout(() => setRenderBoost(target), 100);
-    }
-    return () => clearTimeout(t);
-  }, [pinchScale, renderBoost]);
 
   // Geometry
   const [viewport, setViewport] = useState({ w: 0, h: 0 });
@@ -124,13 +104,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   }, [viewport, pageAspect, fitMode]);
 
   // Final page width
-  let pageWidth = Math.floor(targetBaseWidth * zoom);
-  // On narrow viewports, ensure we fit inside with some padding
-  const isNarrow = viewport.w && viewport.w < 640;
-  if (isNarrow) {
-    const pad = 32; // keep some horizontal padding for UI
-    pageWidth = Math.floor(Math.max(200, Math.min(pageWidth, viewport.w - pad)));
-  }
+  const pageWidth = Math.floor(targetBaseWidth * zoom);
 
   // PDF load handlers
   const onDocLoad = useCallback(({ numPages }) => setNumPages(numPages), []);
@@ -183,29 +157,9 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   }, [viewMode, numPages, pageWidth, currPage]);
 
   // Helpers
-  const zoomLevels = [0.5, 0.75, 1, 1.25, 1.5, 2, 3, 4];
-  const nearestLevel = (z) => {
-    let best = zoomLevels[0];
-    let diff = Infinity;
-    for (const lvl of zoomLevels) {
-      const d = Math.abs(lvl - z);
-      if (d < diff) { diff = d; best = lvl; }
-    }
-    return best;
-  };
-  const nextLevel = (z, dir) => {
-    const idx = zoomLevels.findIndex(l => l >= z - 1e-6 && l <= z + 1e-6) !== -1 ? zoomLevels.findIndex(l => l >= z - 1e-6 && l <= z + 1e-6) : zoomLevels.indexOf(nearestLevel(z));
-    if (dir > 0) return zoomLevels[Math.min(zoomLevels.length - 1, idx + 1)];
-    return zoomLevels[Math.max(0, idx - 1)];
-  };
-  const zoomIn = () => setZoom(z => nextLevel(z, +1));
-  const zoomOut = () => setZoom(z => nextLevel(z, -1));
+  const zoomIn = () => setZoom((z) => clamp(Math.round((z + 0.1) * 10) / 10, 0.25, 4));
+  const zoomOut = () => setZoom((z) => clamp(Math.round((z - 0.1) * 10) / 10, 0.25, 4));
   const resetZoom = () => setZoom(1);
-  const resetZoomAndPinch = () => {
-    setZoom(1);
-    setPinchScale(1);
-    setPzKey((k) => k + 1);
-  };
   const scrollToPage = (p) => {
     const el = pageRefs.current?.[p];
     if (!el) return;
@@ -225,22 +179,6 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     window.addEventListener("viewer:goto", onGoto);
     return () => window.removeEventListener("viewer:goto", onGoto);
   }, [viewMode, numPages, activeFile?.id]);
-
-  // Keyboard shortcuts for zoom (Ctrl/Cmd + '+', '-', '0') and quick fit toggles
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) return;
-      const ctrl = e.ctrlKey || e.metaKey;
-      if (ctrl && (e.key === '+' || e.key === '=')) { e.preventDefault(); zoomIn(); }
-      else if (ctrl && (e.key === '-' || e.key === '_')) { e.preventDefault(); zoomOut(); }
-      else if (ctrl && (e.key === '0')) { e.preventDefault(); resetZoomAndPinch(); }
-      else if (e.key === 'f') { // toggle fit mode quickly
-        setFitMode(f => f === 'width' ? 'page' : 'width');
-      }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, []);
 
   // Mutators
   const addHighlightRects = (page, rects) => {
@@ -283,7 +221,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     <div className="flex-1 min-h-0 flex flex-col bg-neutral-950">
       {/* Toolbar */}
       <div className="sticky top-0 z-20 backdrop-blur bg-neutral-900/70 border-b border-white/10 shadow-[0_1px_0_0_rgba(255,255,255,0.04)]">
-  <div className="h-12 px-3 flex flex-wrap items-center gap-3">
+        <div className="h-12 px-3 flex items-center gap-3">
           <Segment title="Tools">
             <SegButton
               active={tool === "draw"}
@@ -295,9 +233,9 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
 
           <Segment title="Zoom">
             <IconButton onClick={zoomOut} title="Zoom out"><ZoomOut size={16} /></IconButton>
-            <div className="px-2 min-w-[52px] text-center text-sm text-slate-200 tabular-nums">{Math.round(zoom * pinchScale * 100)}%</div>
+            <div className="px-2 min-w-[52px] text-center text-sm text-slate-200 tabular-nums">{Math.round(zoom * 100)}%</div>
             <IconButton onClick={zoomIn} title="Zoom in"><ZoomIn size={16} /></IconButton>
-            <IconButton onClick={resetZoomAndPinch} title="Reset zoom"><RotateCcw size={16} /></IconButton>
+            <IconButton onClick={resetZoom} title="Reset zoom"><RotateCcw size={16} /></IconButton>
           </Segment>
 
           <div className="ml-1">
@@ -315,8 +253,8 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
           <div className="ml-auto flex items-center gap-2">
             {tool === "draw" && (
               <>
-                <button onClick={undoStroke} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm inline-flex items-center gap-2" title="Undo (current page)"><CornerUpLeft size={16} /><span className="hidden sm:inline">Undo</span></button>
-                <button onClick={clearStrokes} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm inline-flex items-center gap-2" title="Clear drawings (current page)"><Trash2 size={16} /><span className="hidden sm:inline">Clear</span></button>
+                <button onClick={undoStroke} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm" title="Undo (current page)">Undo</button>
+                <button onClick={clearStrokes} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm" title="Clear drawings (current page)">Clear</button>
               </>
             )}
             <a
@@ -325,7 +263,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
               download={activeFile.name || "document.pdf"}
               title="Download"
             >
-              <Download size={16} /> <span className="hidden sm:inline">Download</span>
+              <Download size={16} /> Download
             </a>
           </div>
         </div>
@@ -336,7 +274,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
         ref={scrollRef}
         className={`relative flex-1 min-h-0 overflow-auto ${
           tool === "hand" ? "cursor-grab select-none" : tool === "draw" ? "cursor-crosshair select-none" : "cursor-default"
-        } touch-pan-y overscroll-contain themed-scroll`}
+        } touch-none overscroll-contain themed-scroll`}
       >
         {fileSpec ? (
           <Document
@@ -349,89 +287,66 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
             noData={<DocError text="No PDF data" />}
             className="pb-12"
           >
-            <PinchZoom
-              key={`pz-${pzKey}`}
-              min={1}
-              max={5}
-              wheelZoom
-              className="w-full flex justify-center"
-              onScale={(s) => {
-                setPinchScale(s);
-                // lightweight quality bump while actively scaling
-                const target = Math.max(1, Math.min(2, s));
-                if (Math.abs(target - renderBoost) > 0.15) setRenderBoost(target);
-              }}
-              onScaleEnd={(s) => {
-                // Commit scale into persistent zoom; reset transient state
-                setZoom((z) => clamp(Math.round(z * s * 100) / 100, 0.25, 4));
-                setPinchScale(1);
-                setRenderBoost(1);
-                // remount PinchZoom so internal transform resets cleanly
-                setPzKey((k) => k + 1);
-              }}
-              centerZoom={false}>
-              <div className="mx-auto my-6" style={{ width: pageWidth }}>
-                {Array.from({ length: numPages || 0 }, (_, i) => {
-                  const p = i + 1;
-                  return (
-                    <div key={`p-${p}`} data-page={p} ref={(el) => (pageRefs.current[p] = el || undefined)} className="mb-6 overflow-visible">
-                      <PDFPage
-                        scrollRef={scrollRef}
-                        pageNumber={p}
-                        pageWidth={pageWidth}
-                        renderWidth={Math.floor(pageWidth * renderBoost)}
-                        onFirstPageLoad={p === 1 ? onFirstPageLoad : undefined}
-                        tool={tool}
-                        dpr={dpr}
-                        strokes={strokesByPage[p] || []}
-                        onAddStroke={(s) => addStroke(p, s)}
-                        highlights={highlightsByPage[p] || []}
-                        onAddHighlight={(rects) => addHighlightRects(p, rects)}
-                        onAnchor={(payload) => {
-                          // 1) paint highlight locally
-                          addHighlightRects(p, payload.rects);
+            <div className="mx-auto my-6" style={{ width: pageWidth }}>
+              {Array.from({ length: numPages || 0 }, (_, i) => {
+                const p = i + 1;
+                return (
+                  <div key={`p-${p}`} data-page={p} ref={(el) => (pageRefs.current[p] = el || undefined)} className="mb-6">
+                    <PDFPage
+                      scrollRef={scrollRef}
+                      pageNumber={p}
+                      pageWidth={pageWidth}
+                      onFirstPageLoad={p === 1 ? onFirstPageLoad : undefined}
+                      tool={tool}
+                      dpr={dpr}
+                      strokes={strokesByPage[p] || []}
+                      onAddStroke={(s) => addStroke(p, s)}
+                      highlights={highlightsByPage[p] || []}
+                      onAddHighlight={(rects) => addHighlightRects(p, rects)}
+                      onAnchor={(payload) => {
+                        // 1) paint highlight locally
+                        addHighlightRects(p, payload.rects);
 
-                          // 2) notify any parent if provided
-                          try {
-                            (onAnchor ||
-                              (() =>
-                                fetch("/api/anchor", {
-                                  method: "POST",
-                                  headers: { "Content-Type": "application/json" },
-                                  body: JSON.stringify({
-                                    docId: activeFile.id,
-                                    page: p,
-                                    text: payload.text,
-                                    rects: payload.rects,
-                                  }),
-                                })))();
-                          } catch (e) {
-                            console.error("Anchor API failed:", e);
-                          }
-
-                          // 3) broadcast to ChatPanel to trigger RAG insights
-                          try {
-                            window.dispatchEvent(
-                              new CustomEvent("doc-anchor", {
-                                detail: {
+                        // 2) notify any parent if provided
+                        try {
+                          (onAnchor ||
+                            (() =>
+                              fetch("/api/anchor", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
                                   docId: activeFile.id,
-                                  fileName: activeFile.name,
                                   page: p,
                                   text: payload.text,
                                   rects: payload.rects,
-                                },
-                              })
-                            );
-                          } catch (e) {
-                            console.error("Anchor event failed:", e);
-                          }
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </PinchZoom>
+                                }),
+                              })))();
+                        } catch (e) {
+                          console.error("Anchor API failed:", e);
+                        }
+
+                        // 3) broadcast to ChatPanel to trigger RAG insights
+                        try {
+                          window.dispatchEvent(
+                            new CustomEvent("doc-anchor", {
+                              detail: {
+                                docId: activeFile.id,
+                                fileName: activeFile.name,
+                                page: p,
+                                text: payload.text,
+                                rects: payload.rects,
+                              },
+                            })
+                          );
+                        } catch (e) {
+                          console.error("Anchor event failed:", e);
+                        }
+                      }}
+                    />
+                  </div>
+                );
+              })}
+            </div>
           </Document>
         ) : (
           <DocError text="No PDF URL" />
