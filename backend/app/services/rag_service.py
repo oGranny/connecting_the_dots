@@ -255,12 +255,21 @@ class RAGIndex:
             return []
         qv = Q[0]
         qv = qv / (np.linalg.norm(qv) + 1e-12)
-        sims = self.V @ qv
-        k = min(k, len(sims))
+        # Guard: vectors and metas can drift if an index write was interrupted.
+        n_vecs = int(self.V.shape[0])
+        n_meta = int(len(self.metas))
+        n = min(n_vecs, n_meta)
+        if n <= 0:
+            return []
+        sims = (self.V[:n] @ qv)
+        k = min(k, n)
         idxs = np.argpartition(-sims, k-1)[:k]
         idxs = idxs[np.argsort(-sims[idxs])]
         out: List[Dict[str, Any]] = []
         for rank, i in enumerate(idxs, start=1):
+            # Extra safety in case of any lingering mismatch
+            if i < 0 or i >= len(self.metas):
+                continue
             m = self.metas[i]
             txt = (m["text"] or "")[:Config.CTX_SNIPPET_CHARS]
             out.append({

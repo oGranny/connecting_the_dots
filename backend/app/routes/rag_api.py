@@ -8,8 +8,12 @@ bp = Blueprint("rag_api", __name__)
 
 @bp.get("/api/rag/status")
 def rag_status():
+    v_rows = int(0 if rag.V is None else rag.V.shape[0])
+    meta_rows = int(len(rag.metas) if hasattr(rag, "metas") and rag.metas is not None else 0)
     return jsonify({
-        "chunks": int(0 if rag.V is None else rag.V.shape[0]),
+        "chunks": v_rows,
+        "metas": meta_rows,
+        "mismatch": (v_rows != meta_rows),
         "dim": Config.EMBED_DIM,
         "isIndexing": rag.is_indexing,
         "lastUpdated": rag.last_updated,
