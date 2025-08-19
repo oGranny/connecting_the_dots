@@ -28,6 +28,7 @@ export default function PDFPage({
   const strokePts = useRef([]);
   const brushSize = 2;
 
+
   const rerenderCanvas = useCallback(() => {
     const el = layerRef.current;
     const cvs = canvasRef.current;
@@ -133,7 +134,15 @@ export default function PDFPage({
       <canvas
         ref={canvasRef}
         className={`absolute inset-0 ${(isDraw || isErase) ? "pointer-events-auto" : "pointer-events-none"}`}
+        style={{
+          cursor: isDraw
+            ? "url('/pen-cursor.png') 4 24, crosshair"
+            : isErase
+            ? "url('/eraser-cursor.png') 10 10, crosshair"
+            : undefined,
+        }}
       />
+
 
       <div className="absolute inset-0 pointer-events-none">
         {highlights.map((r, i) => (

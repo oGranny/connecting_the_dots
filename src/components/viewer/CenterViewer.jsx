@@ -195,8 +195,9 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
       const { page, docId } = e.detail || {};
       if (!page) return;
       if (docId && activeFile?.id && docId !== activeFile.id) return; // ignore if targeting another doc
-      if (viewMode === "continuous") scrollToPage(clamp(parseInt(page, 10) || 1, 1, numPages || 1));
-      else setCurrPage(clamp(parseInt(page, 10) || 1, 1, numPages || 1));
+      const p = clamp(parseInt(page, 10) || 1, 1, numPages || 1);
+      if (viewMode === "continuous") scrollToPage(p);
+      else setCurrPage(p);
     }
     window.addEventListener("viewer:goto", onGoto);
     return () => window.removeEventListener("viewer:goto", onGoto);
@@ -316,6 +317,14 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
         className={`relative flex-1 min-h-0 overflow-auto ${
           tool === "hand" ? "cursor-grab select-none" : (tool === "draw" || tool === "erase") ? "cursor-crosshair select-none" : "cursor-default"
         } touch-none overscroll-contain themed-scroll`}
+        style={{
+          cursor:
+            tool === "draw"
+              ? "url('/pen-cursor.png') 4 24, crosshair"
+              : tool === "erase"
+              ? "url('/eraser-cursor.png') 10 10, crosshair"
+              : undefined,
+        }}
       >
         {fileSpec ? (
           <Document
