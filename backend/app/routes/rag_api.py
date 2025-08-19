@@ -2,7 +2,7 @@ import glob
 import os
 from flask import Blueprint, jsonify, request
 from ..config import Config
-from ..services.rag_service import rag, index_async
+from ..services.rag_service import rag, index_async, top_snippets_async, hybrid_answer
 
 bp = Blueprint("rag_api", __name__)
 
@@ -55,3 +55,82 @@ def rag_query():
     except Exception as e:
         print(f"RAG query failed: {str(e)}")
         return jsonify({"error": "rag-failed", "detail": str(e)}), 500
+
+@bp.post("/api/rag/query-hybrid")
+def rag_query_hybrid():
+    """
+    Hybrid query:
+      - if rank1 score >= CHAT_CONF_THRESHOLD -> normal RAG answer
+      - else -> LLM over precomputed top snippets (sidecars)
+    Params:
+      q (str)                   : required
+      top_k (int, optional)     : default Config.TOP_K_DEFAULT
+      conf_threshold (float)    : optional override; else env/Config
+      max_snippets_total (int)  : optional; default 12
+      max_snippets_per_pdf (int): optional; default 5
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    q = (data.get("q") or "").strip()
+    if not q:
+        return jsonify({"error": "Provide 'q'"}), 400
+
+    top_k = int(data.get("top_k", Config.TOP_K_DEFAULT))
+    conf_threshold = data.get("conf_threshold", None)
+    max_snips_total = data.get("max_snippets_total", 12)
+    max_snips_per_pdf = data.get("max_snippets_per_pdf", 5)
+
+    try:
+        resp = hybrid_answer(
+            query=q,
+            top_k=top_k,
+            conf_threshold=conf_threshold,
+            max_snippets_total=max_snips_total,
+            max_snippets_per_pdf=max_snips_per_pdf,
+        )
+        # safety: never send empty answer
+        if not (resp.get("answer") or "").strip():
+            resp["answer"] = "I couldn't produce an answer from the documents."
+        return jsonify(resp)
+    except Exception as e:
+        print(f"Hybrid query failed: {e}")
+        return jsonify({"error": "rag-hybrid-failed", "detail": str(e)}), 500
+
+@bp.get("/api/rag/snippets/<file_id>")
+def rag_get_snippets_sidecar(file_id):
+    """
+    Returns the top-snippets sidecar JSON for a given uploaded file id.
+    """
+    sc = os.path.join(Config.UPLOAD_DIR, f"{file_id}.topsnips.json")
+    if not os.path.exists(sc):
+        return jsonify({"error": "not-found"}), 404
+    try:
+        import json
+        with open(sc, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return jsonify(data)
+    except Exception as e:
+        return jsonify({"error": "read-failed", "detail": str(e)}), 500
+
+@bp.post("/api/rag/snippets/rebuild")
+def rag_rebuild_snippets():
+    """
+    Body: { "ids": ["<file_id1>", ...], "k": 8 }
+    Rebuilds the top-snippets sidecars asynchronously.
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    ids = data.get("ids") or []
+    if not isinstance(ids, list) or not ids:
+        return jsonify({"error": "Provide non-empty 'ids' array"}), 400
+    k = data.get("k", None)
+
+    paths = []
+    for fid in ids:
+        p = os.path.join(Config.UPLOAD_DIR, fid)
+        if os.path.isfile(p):
+            paths.append(p)
+
+    if not paths:
+        return jsonify({"error": "no-valid-files"}), 400
+
+    top_snippets_async(paths, k)
+    return jsonify({"ok": True, "queued": [os.path.basename(p) for p in paths]})

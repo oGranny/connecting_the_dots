@@ -4,7 +4,7 @@ from flask import Blueprint, request, jsonify, send_from_directory, current_app
 from ..config import Config
 from ..services.pdf_service import save_pdf
 from ..services.rag_service import index_async
-from ..services.rag_service import index_async, rag
+from ..services.rag_service import index_async, rag, top_snippets_async
 
 bp = Blueprint("uploads", __name__)
 
@@ -73,23 +73,17 @@ def upload():
     if "file" in request.files:
         file = request.files["file"]
         meta = save_pdf(file)
-        saved_paths.append(os.path.join(Config.UPLOAD_DIR, meta["id"]))
+        path = os.path.join(Config.UPLOAD_DIR, meta["id"])
+        saved_paths.append(path)
+        # Kick off both indexing and top-snippets in background
         index_async(saved_paths)
+        try:
+            k = int(os.getenv("TOP_SNIPPETS_PER_PDF", 8))
+        except Exception:
+            k = 8
+        top_snippets_async(saved_paths, k)
         return jsonify(meta)
 
-    files = request.files.getlist("files[]")
-    if not files:
-        return jsonify({"error": "No file(s) provided"}), 400
-
-    metas = []
-    for f in files:
-        m = save_pdf(f)
-        metas.append(m)
-        saved_paths.append(os.path.join(Config.UPLOAD_DIR, m["id"]))
-
-    index_async(saved_paths)
-    return jsonify({"files": metas})
-    
 @bp.get("/api/files")
 def list_files():
     items = []
