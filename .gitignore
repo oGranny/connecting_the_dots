@@ -22,16 +22,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Python cache & bytecode
-__pycache__/
-**/__pycache__/
-*.py[cod]
-
-# Virtual environments (any depth)
-.venv/
-venv/
-**/.venv/
-**/venv/
+**/__pycache__/**
+*/.venv/
 
 **/uploads/**
 # !**/uploads/.gitkeep
