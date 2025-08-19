@@ -24,6 +24,7 @@ yarn-error.log*
 
 **/__pycache__/**
 */.venv/
+**.pyc
 
 **/uploads/**
 # !**/uploads/.gitkeep
