@@ -12,17 +12,22 @@ export default function PDFPage({
   dpr,
   strokes,
   onAddStroke,
+  onEraseAt,
   highlights,
   onAddHighlight,
   onAnchor,
+  penColor,
 }) {
   const layerRef = useRef(null);
   const canvasRef = useRef(null);
 
   const isDraw = tool === "draw";
+  const isErase = tool === "erase";
   const [isDrawing, setIsDrawing] = useState(false);
+  const [isErasing, setIsErasing] = useState(false);
   const strokePts = useRef([]);
   const brushSize = 2;
+
 
   const rerenderCanvas = useCallback(() => {
     const el = layerRef.current;
@@ -48,7 +53,7 @@ export default function PDFPage({
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
       }
       ctx.lineWidth = (s.size ?? brushSize) * dpr;
-      ctx.strokeStyle = "#e5e7eb";
+      ctx.strokeStyle = s.color ?? "#e5e7eb";
       ctx.stroke();
     }
   }, [strokes, dpr]);
@@ -61,16 +66,28 @@ export default function PDFPage({
   };
 
   const handlePointerDown = (e) => {
-    if (!isDraw) return;
+    if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
     const cvs = canvasRef.current;
     if (!cvs) return;
-    setIsDrawing(true);
+    if (isDraw) setIsDrawing(true);
+    if (isErase) setIsErasing(true);
     cvs.setPointerCapture?.(e.pointerId);
     strokePts.current = [clientToRel(e, cvs)];
   };
   const handlePointerMove = (e) => {
-    if (!isDraw || !isDrawing) return;
+    if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
     const cvs = canvasRef.current; if (!cvs) return;
+    if (isErase && isErasing) {
+      const pt = clientToRel(e, cvs);
+      const radiusRel = (brushSize * dpr * 3) / Math.min(cvs.width, cvs.height); // a bit larger than brush
+      onEraseAt?.(pt, radiusRel);
+      return;
+    }
+    if (!isDrawing) return;
     strokePts.current.push(clientToRel(e, cvs));
     const ctx = cvs.getContext("2d");
     const n = strokePts.current.length;
@@ -78,25 +95,28 @@ export default function PDFPage({
       const a = strokePts.current[n - 2], b = strokePts.current[n - 1];
       ctx.beginPath();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
-      ctx.lineWidth = brushSize * dpr; ctx.strokeStyle = "#e5e7eb";
+      ctx.lineWidth = brushSize * dpr; ctx.strokeStyle = penColor || "#e5e7eb";
       ctx.moveTo(a.x * cvs.width, a.y * cvs.height);
       ctx.lineTo(b.x * cvs.width, b.y * cvs.height);
       ctx.stroke();
     }
   };
-  const handlePointerUp = () => {
-    if (!isDraw) return;
+  const handlePointerUp = (e) => {
+    if (!isDraw && !isErase) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (isErase) { setIsErasing(false); return; }
     setIsDrawing(false);
     const pts = strokePts.current.slice();
     strokePts.current = [];
     if (pts.length < 2) return;
-    onAddStroke({ pts, size: brushSize });
+    onAddStroke({ pts, size: brushSize, color: penColor });
   };
 
   return (
     <div
       ref={layerRef}
-      className={`relative rounded-xl shadow-sm ring-1 ring-black/10 overflow-hidden ${tool === "hand" ? "select-none" : ""}`}
+      className={`relative rounded-xl shadow-sm ring-1 ring-black/10 overflow-hidden ${(isDraw || isErase) ? "select-none" : ""}`}
       style={{ width: pageWidth }}
       onPointerDown={handlePointerDown}
       onPointerMove={handlePointerMove}
@@ -113,8 +133,16 @@ export default function PDFPage({
 
       <canvas
         ref={canvasRef}
-        className={`absolute inset-0 ${isDraw ? "pointer-events-auto" : "pointer-events-none"}`}
+        className={`absolute inset-0 ${(isDraw || isErase) ? "pointer-events-auto" : "pointer-events-none"}`}
+        style={{
+          cursor: isDraw
+            ? "url('/pen-cursor.png') 4 24, crosshair"
+            : isErase
+            ? "url('/eraser-cursor.png') 10 10, crosshair"
+            : undefined,
+        }}
       />
+
 
       <div className="absolute inset-0 pointer-events-none">
         {highlights.map((r, i) => (
