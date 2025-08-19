@@ -20,14 +20,14 @@ export default function Sidebar({ headings = [], status, onJumpToHeading, onFilt
 
   return (
     <div className="p-3">
-      <div className="p-2 border border-slate-700 rounded-lg bg-slate-800/40 mb-3 flex items-center gap-2">
+      {/* <div className="p-2 border border-slate-700 rounded-lg bg-slate-800/40 mb-3 flex items-center gap-2">
         <Search size={16} className="opacity-70" />
         <input
           placeholder="Filter headings…"
           className="bg-transparent outline-none text-xs flex-1 placeholder:text-slate-400"
           onChange={(e) => onFilter?.(e.target.value)}
         />
-      </div>
+      </div> */}
 
       {status === "pending" && (
         <div className="mb-3 flex items-center gap-2 text-xs text-slate-300 bg-slate-800/60 border border-slate-700 rounded-md px-2 py-1">
