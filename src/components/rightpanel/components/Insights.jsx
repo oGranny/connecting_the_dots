@@ -16,49 +16,73 @@ function Pill({ children }) {
 }
 
 // Simple markdown renderer for AI answers
-function MarkdownText({ text }) {
+// Simple markdown renderer for AI answers WITH [N] link support
+function MarkdownText({ text, onRankClick }) {
   if (!text) return null;
 
-  // Split text into lines and process markdown
-  const lines = text.split('\n');
-  const elements = [];
-  
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    
-    // Handle headers
-    if (line.startsWith('**') && line.endsWith('**') && line.length > 4) {
-      const headerText = line.slice(2, -2);
-      elements.push(
-        <div key={i} className="font-bold text-slate-100 mt-4 mb-2 text-sm">
-          {headerText}
-        </div>
+  const renderBold = (str, keyBase) => {
+    const parts = str.split(/\*\*(.*?)\*\*/g);
+    return parts.map((p, i) =>
+      i % 2 === 1 ? (
+        <strong key={`${keyBase}-b-${i}`} className="font-semibold text-slate-100">
+          {p}
+        </strong>
+      ) : (
+        <React.Fragment key={`${keyBase}-t-${i}`}>{p}</React.Fragment>
+      )
+    );
+  };
+
+  // For each line, turn [123] into a clickable button/link
+  const renderLineWithRefs = (line, keyBase) => {
+    const out = [];
+    let last = 0;
+    const re = /\[(\d+)\]/g;
+    let m;
+    while ((m = re.exec(line)) !== null) {
+      const before = line.slice(last, m.index);
+      if (before) out.push(<span key={`${keyBase}-pre-${m.index}`}>{renderBold(before, `${keyBase}-pre-${m.index}`)}</span>);
+
+      const n = Number(m[1]);
+      out.push(
+        <button
+          key={`${keyBase}-ref-${m.index}`}
+          className="text-blue-300 hover:underline font-medium"
+          onClick={() => onRankClick?.(n)}
+          title={`Open source [${n}]`}
+        >
+          [{n}]
+        </button>
       );
-      continue;
+
+      last = re.lastIndex;
     }
-    
-    // Handle bold text inline
-    if (line.includes('**')) {
-      const parts = line.split(/\*\*(.*?)\*\*/g);
-      const rendered = parts.map((part, idx) => 
-        idx % 2 === 1 ? <strong key={idx} className="font-semibold text-slate-100">{part}</strong> : part
-      );
-      elements.push(<div key={i} className="mb-1">{rendered}</div>);
-      continue;
-    }
-    
-    // Handle empty lines
-    if (line.trim() === '') {
-      elements.push(<div key={i} className="h-2"></div>);
-      continue;
-    }
-    
-    // Regular text
-    elements.push(<div key={i} className="mb-1">{line}</div>);
-  }
-  
-  return <div className="text-sm leading-relaxed text-slate-200">{elements}</div>;
+    const after = line.slice(last);
+    if (after) out.push(<span key={`${keyBase}-post`}>{renderBold(after, `${keyBase}-post`)}</span>);
+    return out;
+  };
+
+  return (
+    <div className="text-sm leading-relaxed text-slate-200">
+      {text.split("\n").map((line, i) => {
+        const isHeader = line.startsWith("**") && line.endsWith("**") && line.length > 4;
+        if (isHeader) {
+          const headerText = line.slice(2, -2);
+          return (
+            <div key={`h-${i}`} className="font-bold text-slate-100 mt-4 mb-2 text-sm">
+              {headerText}
+            </div>
+          );
+        }
+        if (line.trim() === "") {
+          return <div key={`sp-${i}`} className="h-2" />;
+        }
+        return <div key={`ln-${i}`} className="mb-1">{renderLineWithRefs(line, `ln-${i}`)}</div>;
+      })}
+    </div>
+  );
 }
+
 
 export function InsightsLoading() {
   return (
@@ -306,17 +330,127 @@ function BucketBlock({ title, items, activeFile, onFileSelect, files }) {
   );
 }
 
-export function InsightsCard({ selection, answer, buckets = EMPTY_BUCKETS, activeFile, onFileSelect, files }) {
+export function InsightsCard({ selection, answer, buckets = EMPTY_BUCKETS, contexts = [], activeFile, onFileSelect, files }) {
+  // Find a context by rank from either the raw contexts (best) or the bucketized list
+  const findContextByRank = useCallback(
+    (rank) => {
+      const r = Number(rank);
+      return (
+        (contexts || []).find((c) => Number(c.rank) === r) ||
+        Object.values(buckets || {})
+          .flat()
+          .find((c) => Number(c.rank) === r)
+      );
+    },
+    [contexts, buckets]
+  );
+
+  // Same navigation + highlight logic as CtxRow.go (copy-paste & adapt)
+  const jumpToContext = useCallback(
+    (ctx) => {
+      if (!ctx) return;
+      const title = niceName(ctx.pdf_name);
+
+      const isCurrentFile =
+        activeFile?.name &&
+        (ctx.pdf_name?.endsWith(activeFile.name) || niceName(ctx.pdf_name) === activeFile.name);
+
+      const doHighlight = (docId, page, start, end, text) => {
+        // jump
+        window.dispatchEvent(
+          new CustomEvent("viewer:goto", {
+            detail: { page, docId },
+          })
+        );
+        // precise highlight after small delay
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("viewer:highlight-range", {
+              detail: {
+                page,
+                start,
+                end,
+                text,
+                highlightColor: "rgba(59, 130, 246, 0.3)",
+              },
+            })
+          );
+        }, 300);
+      };
+
+      if (isCurrentFile) {
+        // same doc: just jump & highlight
+        doHighlight(activeFile.id, ctx.page, ctx.start, ctx.end, ctx.text);
+        return;
+      }
+
+      // find target file (mirror of CtxRow)
+      const targetFile = files?.find((f) => {
+        if (f.name === ctx.pdf_name) return true;
+        const clean = ctx.pdf_name?.replace(/^[a-f0-9]{32}_/, "");
+        const normalized = clean?.replace(/_/g, " ");
+        if (f.name === clean) return true;
+        if (f.name === normalized) return true;
+        if (clean?.endsWith(f.name)) return true;
+        if (normalized?.endsWith(f.name)) return true;
+        if (f.name.endsWith(clean || "")) return true;
+        if (f.name.endsWith(normalized || "")) return true;
+        const nice1 = niceName(ctx.pdf_name);
+        const nice2 = niceName(f.name);
+        if (nice1 === nice2) return true;
+        if (ctx.pdf_name?.includes(f.name)) return true;
+        if (f.name.includes(clean || ctx.pdf_name)) return true;
+        if (f.name.includes(normalized || ctx.pdf_name)) return true;
+        return false;
+      });
+
+      if (targetFile && onFileSelect) {
+        const targetPage = ctx.page;
+        const targetDocId = targetFile.id;
+        const { start, end, text } = ctx;
+
+        const handleViewerReady = () => {
+          setTimeout(() => doHighlight(targetDocId, targetPage, start, end, text), 100);
+          window.removeEventListener("viewer:ready", handleViewerReady);
+        };
+        window.addEventListener("viewer:ready", handleViewerReady);
+
+        onFileSelect(targetFile.id);
+
+        // fallback
+        setTimeout(() => {
+          doHighlight(targetDocId, targetPage, start, end, text);
+          window.removeEventListener("viewer:ready", handleViewerReady);
+        }, 1000);
+      } else {
+        console.warn(`Could not find PDF file to open for: ${title}`);
+      }
+    },
+    [activeFile, onFileSelect, files]
+  );
+
+  const handleRankClick = useCallback(
+    (rank) => {
+      const ctx = findContextByRank(rank);
+      if (ctx) jumpToContext(ctx);
+    },
+    [findContextByRank, jumpToContext]
+  );
+
   return (
     <div className="px-3 py-2 text-slate-200">
       <div className="flex items-center gap-2 text-xs text-slate-300 mb-3">
         <Pill>Insights</Pill>
-        <span className="truncate">for "{selection?.slice(0, 80)}{selection?.length > 80 ? "…" : ""}"</span>
+        <span className="truncate">
+          for "{selection?.slice(0, 80)}
+          {selection?.length > 80 ? "…" : ""}"
+        </span>
       </div>
 
       {answer && (
         <div className="mt-2 p-3">
-          <MarkdownText text={answer} />
+          {/* Renders [N] as clickable links that jump & highlight */}
+          <MarkdownText text={answer} onRankClick={handleRankClick} />
         </div>
       )}
 
@@ -328,6 +462,7 @@ export function InsightsCard({ selection, answer, buckets = EMPTY_BUCKETS, activ
     </div>
   );
 }
+
 
 // export default function ChatPanel({ activeFile, onFileSelect, files }) {
 //   const [messages, setMessages] = useState([
