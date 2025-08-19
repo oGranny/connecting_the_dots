@@ -1,133 +1,206 @@
 # Connecting the Dots
 
-An interactive React app for reading PDFs, exploring document structure, and asking AI questions about your files. It includes a custom PDF viewer, a sidebar **Table of Contents** and **Files** list, and optional **podcast generation** from selected text via a Flask backend.
+PDF exploration platform that combines advanced document analysis, AI-powered insights, and interactive features. Upload PDFs, navigate through smart table of contents, ask AI questions using RAG (Retrieval-Augmented Generation), and generate podcasts from selected text—all in one seamless interface.
 
-## Tech Stack
+## ✨ Key Features
+- 🔍 Smart PDF Viewer: Pan, zoom, rotate, annotate with drawing tools
+- 🤖 AI-Powered Chat: Ask questions about your documents using advanced RAG
+- 🎧 Podcast Generation: Convert selected text into conversational audio
+- 📚 Intelligent TOC: Auto-generated table of contents using YOLO-based layout detection
+- 💡 Context-Aware Insights: Get smart analysis of highlighted content
+- 📁 Multi-Document Management: Switch between multiple uploaded PDFs seamlessly
+- 🎨 Rich Annotations: Draw, highlight, and markup documents with customizable tools
 
-- **React (Create React App)** with `react-scripts`
-- **Tailwind CSS** (`tailwindcss`, `postcss`, `autoprefixer`)
-- **PDF**: `react-pdf`, `pdfjs-dist`
-- **UI**: `lucide-react`, `framer-motion`
-- **Backend (optional)**: Flask API proxied at `http://localhost:4000`
+## 🛠 Tech Stack
 
-## Repo Layout (high level)
-.
-├─ backend/                     # Flask API (RAG, podcast endpoints)
-│  ├─ requirements.txt
-│  └─ .env                      # backend secrets (see below)
-├─ public/
-├─ src/
-│  ├─ components/
-│  │  ├─ Toolbar.jsx
-│  │  ├─ Tabs.jsx
-│  │  ├─ ChatPanel.jsx
-│  │  └─ viewer/
-│  │     ├─ PDFPage.jsx
-│  │     ├─ CenterViewer.jsx
-│  │     ├─ selection.css
-│  │     └─ scrollbar.css
-│  ├─ services/
-│  │  └─ api.js                 # API_BASE, client helpers
-│  └─ App.jsx
-├─ package.json                 # includes: “proxy”: “http://localhost:4000”
-├─ tailwind.config.js
-├─ postcss.config.js
-└─ README.md
-> Your tree may have more files; the list above reflects the parts most people touch.
+### Frontend
+- React 18+ (Create React App)
+- Tailwind CSS for styling
+- Framer Motion for animations
+- Lucide React for icons
+- react-pdf & pdfjs-dist for PDF rendering
 
-## Prerequisites
+### Backend
+- Flask (Python 3.10+)
+- RAG Implementation with vector embeddings
+- Azure Text-to-Speech for podcast generation
+- Custom YOLO for document layout detection
+- OpenAI/LLM integration for AI features
 
-- **Node.js** 18+ (LTS recommended)
-- **Python** 3.10+ (for the backend)
-- **ffmpeg** (only if you plan to post-process audio files for podcasts)
+### Infrastructure
+- Docker for containerization
+- ffmpeg for audio processing
 
-## Quick Start
 
-### 1) Backend (Flask API on :4000)
+
+## 📁 Project Structure
+
+```text
+connecting_the_dots/
+├── Dockerfile
+├── README.md
+├── docker-compose.yml
+├── nginx.conf
+├── package.json
+├── tailwind.config.js
+├── postcss.config.js
+├── entrypoint.sh
+│
+├── backend/
+│   ├── app/
+│   │   ├── routes/
+│   │   │   ├── analyze_api.py
+│   │   │   ├── outline_api.py
+│   │   │   ├── podcast_api.py
+│   │   │   ├── rag_api.py
+│   │   │   ├── pdf_ops.py
+│   │   │   ├── health.py
+│   │   │   └── uploads.py
+│   │   ├── services/
+│   │   │   ├── genai_service.py
+│   │   │   ├── pdf_service.py
+│   │   │   └── rag_service.py
+│   │   ├── __init__.py
+│   │   └── config.py
+│   ├── model/
+│   │   ├── model.pt
+│   │   └── outline_yolo.py
+│   ├── rag_index/
+│   ├── uploads/
+│   ├── myvenv/
+│   ├── .env
+│   ├── app.py
+│   ├── requirements.txt
+│   └── run.py
+│
+├── public/
+│   ├── favicon.ico
+│   ├── index.html
+│   ├── logo192.png
+│   ├── logo512.png
+│   ├── manifest.json
+│   └── robots.txt
+│
+└── src/
+    ├── components/
+    │   ├── Toolbar.jsx
+    │   ├── Tabs.jsx
+    │   ├── ChatPanel.jsx
+    │   └── viewer/
+    │       ├── PDFPage.jsx
+    │       ├── CenterViewer.jsx
+    │       ├── selection.css
+    │       └── scrollbar.css
+    ├── services/
+    │   └── api.js
+    ├── App.jsx
+    └── index.js
+```
+
+## 🚀 Quick Start
+
+### Option 1 — Docker (recommended)
+
+**Build**
+```bash
+docker build --platform linux/amd64 -t connectin-the-dots:prod .
+```
+
+**Run**
+```bash
+docker run --rm --platform linux/amd64 -p 8080:8080 connectin-the-dots:prod
+```
+
+#### Run (with env & credentials)
+
+If your backend needs cloud creds (e.g., Google service account) or API keys, create a host folder and mount it read-only:
 
 ```bash
+# make a host folder for creds
+mkdir -p "$HOME/credentials"
+
+# copy your JSON key into it (adjust the source path)
+cp ~/Downloads/adbe-gcp.json "$HOME/credentials/"
+
+docker run --rm --platform linux/amd64 \
+  -v "$HOME/credentials:/credentials:ro" \
+  -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/adbe-gcp.json \
+  -e ADOBE_EMBED_API_KEY=your_adobe_key \
+  -e LLM_PROVIDER=gemini \
+  -e GEMINI_MODEL=gemini-2.5-flash \
+  -e TTS_PROVIDER=azure \
+  -e AZURE_TTS_KEY=your_azure_key \
+  -e AZURE_TTS_ENDPOINT=https://example.azure.com/tts \
+  -p 8080:8080 connectin-the-dots:prod
+
+#docker compose(optional)
+docker-compose up -d
+docker-compose logs -f
+docker-compose down
+```
+🧑‍💻 Option 2 — Local Development
+
+Backend
+```bash
 cd backend
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux: source .venv/bin/activate
 
+# create & activate venv
+python -m venv myvenv
+source myvenv/bin/activate        # Windows: myvenv\Scripts\activate
+
+# install dependencies
 pip install -r requirements.txt
-# create .env (see below)
-python run.py          # or: flask run -p 4000
-.env (example):
 
-# RAG / LLM
-OPENAI_API_KEY=sk-...
-# add other provider keys as needed
+# create .env
+cat > .env <<'EOF'
+FLASK_ENV=development
+PORT=4000
 
-# Azure Text-to-Speech (podcast)
-AZURE_SPEECH_KEY=...
-AZURE_SPEECH_REGION=centralindia
+LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-2.5-flash
+GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/adbe-gcp.json
 
+ADOBE_EMBED_API_KEY=replace_me(Optional)
 
-Endpoints expected by the frontend
-	•	POST /api/rag/query → body: { "q": "...", "top_k": 6 }
-	•	POST /api/podcast/from-selection → body: { "selection": "...", "top_k": 5, "minutes": 2.5, "voiceA": "en-IN-NeerjaNeural", "voiceB": "en-IN-PrabhatNeural", "rate": "-2%", "pitch": "0st" }
+TTS_PROVIDER=azure
+AZURE_TTS_KEY=replace_me
+AZURE_TTS_ENDPOINT=https://example.azure.com/tts
+EOF
 
-The frontend is configured with "proxy": "http://localhost:4000" in package.json, so /api/* calls are forwarded automatically in development.
-
-
-2) Frontend (React + Tailwind on :3000)
+# run the API
+python run.py
+```
+Health check:
+```bash
+curl http://localhost:4000/api/health
+```
+Frontend
+```bash
+# from repo root
 npm install
 npm start
-Open http://localhost:3000.
-
-Available Scripts
-
-From the project root:
-	•	npm start – run the frontend dev server (http://localhost:3000)
-	•	npm test – run tests with React Testing Library
-	•	npm run build – production build to build/
-	•	npm run eject – one-way eject from CRA (not recommended unless needed)
-
-Tailwind Setup
-
-Already configured:
-	•	tailwind.config.js scans ./src/**/*.{js,jsx,ts,tsx}
-	•	postcss.config.js loads tailwindcss and autoprefixer
-
-Make sure your global CSS imports Tailwind layers:
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-PDF Viewer Notes
-	•	Uses react-pdf with pdfjs-dist.
-	•	Ensure the worker matches the installed pdf.js version:
-import { pdfjs } from "react-pdf";
-const v = pdfjs.version;
-pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${v}/build/pdf.worker.min.mjs`;
-
-
-Features One can Touch Most
-	•	Toolbar: toggle pan/draw/select modes, zoom/rotate, and a color palette for pencil/highlighter.
-	•	Viewer: page virtualization, smooth zoom/pan, and a non-selectable drawing layer while the pencil is active.
-	•	Sidebar:
-	•	Table of Contents: H1/H2/H3 tree (DocLayout-YOLO output if integrated).
-	•	Files: quick switch between multiple uploaded PDFs.
-	•	ChatPanel: Ask questions about the current document using /api/rag/query.
-	•	Podcast: Select text → POST to /api/podcast/from-selection → play/download.
-    •   Insights: Provides necessary ideas about the highlighted text
-    
-Troubleshooting
-	•	PDF worker / blank pages
-Double-check the worker URL and pdfjs-dist version.
-	•	IntersectionObserver: parameter 1 is not of type ‘Element’
-Only observe when the ref is non-null:
-if (nodeRef?.current instanceof Element) observer.observe(nodeRef.current);
-
-
-•	Text gets selected while drawing
-Apply user-select: none; on the drawing layer container and toggle it when draw mode is active (e.g., by adding/removing a class on <body>).
-•	Accidentally put CSS inside a .jsx
-Keep CSS rules in .css files and import them from components. CRA will throw parser errors if CSS appears in JS/JSX.
-
-Configuration Tips
-•	Backend port different than 4000?
-Update the frontend "proxy" in package.json or set API_BASE in src/services/api.js.
-•	For CRA, any env exposed to the browser must start with REACT_APP_.
+```
+Environemnt variables
+```bash
+ADOBE_EMBED_API_KEY=...
+LLM_PROVIDER=gemini
+GEMINI_MODEL=gemini-2.5-flash
+TTS_PROVIDER=azure
+AZURE_TTS_KEY=...
+AZURE_TTS_ENDPOINT=...
+GOOGLE_APPLICATION_CREDENTIALS=/credentials/...
+```
+🛟 Troubleshooting
+	•	Port already in use
+```bash
+Bind for 0.0.0.0:3000 failed
+```
+Stop anything on that port or change your mapping:
+```bash
+-p 8080:8080
+```
+•	“Heading detection failed (check backend)” in the viewer
+Make sure the backend endpoints are reachable and healthy:
+```bash
+curl http://localhost:8080/api/health
+```
