@@ -1,78 +1,86 @@
-# Base Python image
-FROM python:3.11-slim AS base
+# ---------- base ---------- 
+FROM python:3.11-slim
 
 ARG NODE_MAJOR=20
 
-# Install Node.js
-RUN apt-get update && apt-get install -y curl ca-certificates gnupg bash git --no-install-recommends \
+# System deps (Node + libs needed by cv2/PyMuPDF)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      curl ca-certificates gnupg bash git \
+      libgl1 libglib2.0-0 libjpeg62-turbo zlib1g \
  && curl -fsSL https://deb.nodesource.com/setup_${NODE_MAJOR}.x | bash - \
- && apt-get install -y nodejs \
+ && apt-get install -y --no-install-recommends nodejs \
  && apt-get purge -y --auto-remove curl gnupg \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy backend requirements first (if they exist) to leverage Docker layer caching
+# ---------- backend deps (venv) ----------
 COPY backend/requirements.txt backend/requirements.txt
 RUN python -m venv backend/.venv \
- && . backend/.venv/bin/activate \
- && if [ -f backend/requirements.txt ]; then pip install --no-cache-dir -r backend/requirements.txt; fi
+ && backend/.venv/bin/pip install --no-cache-dir --upgrade pip setuptools wheel \
+ && backend/.venv/bin/pip install --no-cache-dir -r backend/requirements.txt
 
-# Copy the rest of the source
-COPY backend backend
-COPY frontend frontend
+# ---------- frontend deps (cache layer) ----------
+COPY package*.json ./
+RUN npm config set fund false \
+ && npm config set audit false \
+ && ( [ -f package-lock.json ] && npm ci || npm install )
 
-# Install frontend dependencies (preferring clean reproducible install)
-RUN if [ -f frontend/package-lock.json ]; then cd frontend && npm ci --omit=dev || npm ci; \
-    elif [ -f frontend/package.json ]; then cd frontend && npm install; fi
+# ---------- copy source ----------
+COPY . .
 
-# Optional build step (uncomment if you have a build script producing static assets)
-# RUN cd frontend && npm run build
+# Ensure uploads dir exists
+RUN mkdir -p backend/uploads
 
-# Create an entrypoint script that:
-# 1. Ensures venv is "activated" (really just uses its python)
-# 2. Starts backend
-# 3. Starts frontend (after backend launch)
-# 4. Waits on both
-RUN set -eux; \
-  cat > entrypoint.sh <<'EOF'; \
-#!/usr/bin/env bash
-set -euo pipefail
+# ---------- entrypoint (runs backend + frontend) ----------
+# Use printf to avoid heredocs (safe on Windows line endings)
+RUN printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  '' \
+  'export HOST=0.0.0.0' \
+  'export PORT="${PORT:-8080}"' \
+  'export BROWSER=none' \
+  'export CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING:-true}' \
+  '' \
+  'export BACKEND_HOST="${BACKEND_HOST:-0.0.0.0}"' \
+  'export BACKEND_PORT="${BACKEND_PORT:-4000}"' \
+  '' \
+  'echo "[entrypoint] Starting backend (Python) on :$BACKEND_PORT..."' \
+  'backend/.venv/bin/python backend/run.py & ' \
+  'BACK_PID=$!' \
+  'echo "[entrypoint] Backend PID: $BACK_PID"' \
+  '' \
+  'echo "[entrypoint] Starting frontend (npm start) on :$PORT..."' \
+  'npm start & ' \
+  'FRONT_PID=$!' \
+  'echo "[entrypoint] Frontend PID: $FRONT_PID"' \
+  '' \
+  'finish() {' \
+  '  echo "[entrypoint] Caught signal, stopping..."' \
+  '  kill $BACK_PID $FRONT_PID 2>/dev/null || true' \
+  '  wait $BACK_PID $FRONT_PID 2>/dev/null || true' \
+  '}' \
+  'trap finish INT TERM' \
+  '' \
+  'set +e' \
+  'wait -n $BACK_PID $FRONT_PID' \
+  'CODE=$?' \
+  'echo "[entrypoint] One process exited with code $CODE, shutting down..."' \
+  'kill $BACK_PID $FRONT_PID 2>/dev/null || true' \
+  'wait $BACK_PID $FRONT_PID 2>/dev/null || true' \
+  'exit $CODE' \
+  > /entrypoint.sh \
+ && chmod +x /entrypoint.sh
 
-echo "[entrypoint] Starting backend (Python)..."
-backend/.venv/bin/python backend/run.py &
-BACK_PID=$!
-echo "[entrypoint] Backend PID: $BACK_PID"
-
-echo "[entrypoint] Starting frontend (npm start)..."
-cd frontend
-npm start &
-FRONT_PID=$!
-echo "[entrypoint] Frontend PID: $FRONT_PID"
-
-finish() {
-  echo "[entrypoint] Caught signal, stopping..."
-  kill $BACK_PID $FRONT_PID 2>/dev/null || true
-  wait $BACK_PID $FRONT_PID 2>/dev/null || true
-}
-trap finish INT TERM
-
-# Wait on both; exit if either fails
-set +e
-wait -n $BACK_PID $FRONT_PID
-CODE=$?
-echo "[entrypoint] One process exited with code $CODE, shutting down..."
-kill $BACK_PID $FRONT_PID 2>/dev/null || true
-wait $BACK_PID $FRONT_PID 2>/dev/null || true
-exit $CODE
-EOF
-RUN chmod +x entrypoint.sh
-
+# Put venv first in PATH
 ENV PATH="/app/backend/.venv/bin:${PATH}" \
     PYTHONUNBUFFERED=1 \
-    PIP_DISABLE_PIP_VERSION_CHECK=1
+    PIP_DISABLE_PIP_VERSION_CHECK=1 \
+    HOST=0.0.0.0 \
+    PORT=8080
 
-# Expose typical backend/frontend ports (adjust as needed)
-EXPOSE 8000 3000
+# Expose frontend (8080) and backend (4000)
+EXPOSE 8080 4000
 
-ENTRYPOINT ["./entrypoint.sh"]
+ENTRYPOINT ["/entrypoint.sh"]
