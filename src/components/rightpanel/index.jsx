@@ -4,11 +4,41 @@ import { cls } from "../../lib/utils";
 import TopTabs from "./components/TopTabs";
 import PodcastPanel from "./components/PodcastPanel";
 import { InsightsCard, InsightsLoading } from "./components/Insights";
-import { ragQuery, bucketize } from "./lib/helpers";
+import { ragQuery, ragQueryHybrid, bucketize, openPdfAt, niceName } from "./lib/helpers";
 import "./rightpanel.css";
-import { MessageCircle, Search, Bot, User } from "lucide-react";
+import { MessageCircle, Search } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 export default function ChatPanel({ activeFile, onFileSelect, files }) {
+  const MD = useCallback(({ children }) => (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      // Keep HTML disabled (safer). Enable rehypeRaw only if you trust content.
+      components={{
+        a: (props) => <a {...props} target="_blank" rel="noreferrer" className="underline" />,
+        code: ({ inline, className, children, ...props }) =>
+          inline ? (
+            <code className="px-1 py-0.5 rounded bg-white/10 border border-white/10" {...props}>
+              {children}
+            </code>
+          ) : (
+            <pre className="p-3 rounded-xl bg-black/40 border border-white/10 overflow-auto" {...props}>
+              <code className={className}>{children}</code>
+            </pre>
+          ),
+        ul: (props) => <ul className="list-disc pl-5 space-y-1" {...props} />,
+        ol: (props) => <ol className="list-decimal pl-5 space-y-1" {...props} />,
+        p:  (props) => <p className="my-2" {...props} />,
+        h1: (props) => <h1 className="text-lg font-semibold mt-2 mb-1" {...props} />,
+        h2: (props) => <h2 className="text-base font-semibold mt-2 mb-1" {...props} />,
+        h3: (props) => <h3 className="text-sm font-semibold mt-2 mb-1" {...props} />,
+      }}
+    >
+      {children}
+    </ReactMarkdown>
+  ), []);
+
   const [messages, setMessages] = useState([
     { role: "assistant", content: "Hi! I'm your doc AI. Select text in the PDF to see overlapping, contradictory, examples, and more." },
   ]);
@@ -88,17 +118,31 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
     setInsightsLoading(true);
 
     try {
-      // Both tabs now use RAG query
-      const res = await ragQuery(text, 10);
-      
       if (tab === "chat") {
-        // For chat tab, show simple answer
+        // --- NEW: Hybrid call for chat (let backend use its own defaults)
+        const res = await ragQueryHybrid(text, {
+          // You can uncomment/tune these if you want a UI for them later:
+          // top_k: 10,
+          // conf_threshold: 0.7,
+          // max_snippets_total: 12,
+          // max_snippets_per_pdf: 5,
+        });
+
         setMessages((prev) => [
-          ...prev, 
-          { role: "assistant", content: res.answer || "I couldn't find relevant information in the documents." }
+          ...prev,
+          {
+            role: "assistant_hybrid",
+            content: res.answer || "I couldn't find relevant information in the documents.",
+            meta: res._meta || {},
+            mode: res.mode || "unknown",
+            contexts: res.contexts || [],
+            snippets: res.snippets || [],
+            query: res.query,
+          },
         ]);
       } else {
-        // For insights tab, show full insights with buckets
+        // Insights keeps using the classic endpoint
+        const res = await ragQuery(text, 10);
         const buckets = bucketize(text, res.contexts || []);
         setMessages((prev) => [
           ...prev,
@@ -156,135 +200,159 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
           />
         </div>
        
-        <div hidden={tab !== "insights"}>
-          {insightsLoading && <InsightsLoading />}
-          {visible.length ? (
-            visible.map((m, i) => (
-              <InsightsCard
-                key={`ins-${i}`}
-                selection={m.selection}
-                answer={m.answer}
-                buckets={m.buckets}
-                activeFile={activeFile}
-                onFileSelect={onFileSelect}
-                files={files}
-              />
-            ))
-          ) : (
-            !insightsLoading && (
-              <div className="flex flex-col items-center justify-center text-center py-3 px-4">
-                {/* Search Icon styled like podcast tab */}
-                <div className="rounded-2xl p-5 bg-white/5 border border-white/20 mb-4">
-                  <Search size={64} className="text-slate-300" />
-                </div>
-
-                {/* Title */}
-                <h3 className="text-lg font-semibold text-slate-200 mb-2">
-                  Discover Insights
-                </h3>
-
-                {/* Description */}
-                <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
-                  Select any text in your PDF to instantly find related content, 
-                  contradictions, and examples across all your documents.
-                </p>
-
-                {/* Action hints */}
-                <div className="mt-6 flex items-center gap-4 text-xs text-slate-500">
-                  <div className="flex items-center gap-1.5">
-                    <div className="w-2 h-2 bg-blue-400/50 rounded-full"></div>
-                    <span>Select text</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <MessageCircle className="w-3 h-3" />
-                    <span>Ask questions</span>
-                  </div>
-                </div>
-              </div>
-            )
-          )}
-        </div>
-
-        <div hidden={tab !== "chat"}>
-          {/* Loading state for chat */}
-          {insightsLoading && (
-            <div className="flex items-start gap-3">
-              <div className="w-8 h-8 rounded-full bg-blue-500/20 flex items-center justify-center flex-shrink-0 mt-1">
-                <Bot className="w-4 h-4 text-blue-400" />
-              </div>
-              <div className="bg-white/5 border border-white/10 rounded-2xl rounded-tl-md px-4 py-3 max-w-[85%]">
-                <div className="flex items-center gap-2 text-sm text-slate-300">
-                  <div className="flex space-x-1">
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                    <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                  </div>
-                  <span>Searching documents...</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {visible.length ? (
-            <div className="space-y-4">
-              {visible.map((m, i) => (
-                <div
-                  key={`chat-${i}`}
-                  className={cls(
-                    "flex gap-3",
-                    m.role === "assistant" ? "items-start" : "items-start flex-row-reverse"
-                  )}
-                >
-                  {/* Avatar */}
-                  <div className={cls(
-                    "w-8 h-8 rounded-full flex items-center justify-center flex-shrink-0 mt-1",
-                    m.role === "assistant" 
-                      ? "bg-blue-500/20 text-blue-400" 
-                      : "bg-green-500/20 text-green-400"
-                  )}>
-                    {m.role === "assistant" ? (
-                      <Bot className="w-4 h-4" />
-                    ) : (
-                      <User className="w-4 h-4" />
-                    )}
-                  </div>
-
-                  {/* Message bubble */}
-                  <div className={cls(
-                    "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
-                    m.role === "assistant"
-                      ? "bg-white/5 text-slate-100 border border-white/10 rounded-tl-md"
-                      : "bg-blue-600/20 text-slate-100 border border-blue-500/20 rounded-tr-md"
-                  )}>
-                    {m.content}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="flex flex-col items-center justify-center text-center py-8 px-4">
-              <div className="rounded-2xl p-5 bg-white/5 border border-white/20 mb-4">
-                <MessageCircle size={64} className="text-slate-300" />
-              </div>
-              <h3 className="text-lg font-semibold text-slate-200 mb-2">
-                Start a Conversation
-              </h3>
-              <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
-                Ask questions about your documents. Get AI-powered answers based on your PDFs.
-              </p>
-              <div className="mt-6 flex items-center gap-4 text-xs text-slate-500">
-                <div className="flex items-center gap-1.5">
-                  <div className="w-2 h-2 bg-green-400/50 rounded-full"></div>
-                  <span>Ask anything</span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <Search className="w-3 h-3" />
-                  <span>Document search</span>
-                </div>
-              </div>
-            </div>
-          )}
-        </div>
+         {/* INSIGHTS PANEL */}
+         <div hidden={tab !== "insights"}>
+           {insightsLoading && <InsightsLoading />}
+           {visible.length ? (
+             <div className="space-y-4">
+               {visible.map((m, i) => {
+                 // In INSIGHTS, you typically only show the model’s insights response,
+                 // not the user bubbles. visible is already filtered for assistant_insights.
+                 const isHybrid = m.role === "assistant_hybrid";
+                 if (isHybrid) return null; // hybrid never shows in insights tab
+                 const isUser = m.role === "user";
+                 return (
+                   <div key={`ins-${i}`} className={cls("flex", isUser && "justify-end")}>
+                     <div
+                       className={cls(
+                         "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                         isUser
+                           ? "bg-blue-600/20 text-slate-100 border border-blue-500/20 rounded-tr-md"
+                           : "bg-white/5 text-slate-100 border border-white/10 rounded-tl-md"
+                       )}
+                     >
+                       <MD>{m.content}</MD>
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
+           ) : (
+             <div className="flex flex-col items-center justify-center text-center py-8 px-4">
+               <div className="rounded-2xl p-5 bg-white/5 border border-white/20 mb-4">
+                 <MessageCircle size={64} className="text-slate-300" />
+               </div>
+               <h3 className="text-lg font-semibold text-slate-200 mb-2">Select text to get insights</h3>
+               <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
+                 Highlight a sentence in the PDF to see overlaps, contradictions, and examples.
+               </p>
+             </div>
+           )}
+         </div>
+ 
+         {/* CHAT PANEL */}
+         <div hidden={tab !== "chat"}>
+           {insightsLoading && <InsightsLoading />}
+           {visible.length ? (
+             <div className="space-y-4">
+               {visible.map((m, i) => {
+                 const isHybrid = m.role === "assistant_hybrid";
+                 if (!isHybrid) {
+                   const isUser = m.role === "user";
+                   return (
+                     <div key={`chat-${i}`} className={cls("flex", isUser && "justify-end")}>
+                       <div
+                         className={cls(
+                           "max-w-[85%] rounded-2xl px-4 py-3 text-sm leading-relaxed",
+                           isUser
+                             ? "bg-blue-600/20 text-slate-100 border border-blue-500/20 rounded-tr-md"
+                             : "bg-white/5 text-slate-100 border border-white/10 rounded-tl-md"
+                         )}
+                       >
+                         <MD>{m.content}</MD>
+                       </div>
+                     </div>
+                   );
+                 }
+ 
+                 // HYBRID answer bubble
+                 const rank1 = m.meta?.rank1_score;
+                 const thr = m.meta?.threshold;
+                 const tag = m.mode ? m.mode.replace("-", " ") : "hybrid";
+                 return (
+                   <div key={`chat-h-${i}`} className="flex items-start">
+                     <div className="max-w-[85%] bg-white/5 text-slate-100 border border-white/10 rounded-2xl rounded-tl-md px-4 py-3">
+                      <div className="text-sm leading-relaxed">
+                        <MD>{m.content}</MD>
+                      </div>
+                       <div className="mt-2 flex flex-wrap items-center gap-2 text-[11px] text-slate-300">
+                         <span className="px-2 py-0.5 rounded-full bg-white/10 border border-white/15">{tag}</span>
+                         {typeof rank1 === "number" && (
+                           <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10">rank1: {rank1.toFixed(3)}</span>
+                         )}
+                         {typeof thr === "number" && (
+                           <span className="px-2 py-0.5 rounded-full bg-white/5 border border-white/10">threshold: {thr}</span>
+                         )}
+                       </div>
+                       {!!m.contexts?.length && (
+                         <div className="mt-3">
+                           <div className="text-xs text-slate-400 mb-1">Top contexts</div>
+                           <div className="space-y-2">
+                             {m.contexts.slice(0, 3).map((c, idx) => (
+                               <div key={c.chunk_id || idx} className="p-2 rounded-lg bg-white/5 border border-white/10">
+                                 <div className="flex items-center justify-between gap-3 text-xs">
+                                   <div className="truncate">
+                                     <span className="text-slate-300">[{c.rank}]</span>{" "}
+                                     <span className="text-slate-200">{niceName(c.pdf_name)}</span>
+                                     <span className="text-slate-400"> · p.{c.page}</span>
+                                   </div>
+                                   <button
+                                     className="px-2 py-0.5 rounded-md bg-white/10 hover:bg-white/20 text-[11px] text-slate-100 border border-white/15"
+                                     onClick={() => openPdfAt(c.pdf_name, c.page)}
+                                     title="Open in viewer"
+                                   >
+                                     Open
+                                   </button>
+                                 </div>
+                                 {c.text && (
+                                   <div className="mt-1 text-[12px] text-slate-300 line-clamp-3">
+                                     {c.text}
+                                   </div>
+                                 )}
+                               </div>
+                             ))}
+                           </div>
+                         </div>
+                       )}
+                       {!!m.snippets?.length && (
+                         <div className="mt-3">
+                           <div className="text-xs text-slate-400 mb-1">Snippets used</div>
+                           <ul className="space-y-1">
+                             {m.snippets.slice(0, 4).map((s, idx) => (
+                               <li key={s.chunk_id || idx} className="text-[12px] text-slate-300">
+                                 • {s.text?.slice(0, 160) || ""}{s.text?.length > 160 ? "…" : ""}
+                               </li>
+                             ))}
+                           </ul>
+                         </div>
+                       )}
+                     </div>
+                   </div>
+                 );
+               })}
+             </div>
+           ) : (
+             <div className="flex flex-col items-center justify-center text-center py-8 px-4">
+               <div className="rounded-2xl p-5 bg-white/5 border border-white/20 mb-4">
+                 <MessageCircle size={64} className="text-slate-300" />
+               </div>
+               <h3 className="text-lg font-semibold text-slate-200 mb-2">Start a Conversation</h3>
+               <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
+                 Ask questions about your documents. Get AI-powered answers based on your PDFs.
+               </p>
+               <div className="mt-6 flex items-center gap-4 text-xs text-slate-500">
+                 <div className="flex items-center gap-1.5">
+                   <div className="w-2 h-2 bg-green-400/50 rounded-full"></div>
+                   <span>Ask anything</span>
+                 </div>
+                 <div className="flex items-center gap-1.5">
+                   <Search className="w-3 h-3" />
+                   <span>Document search</span>
+                 </div>
+               </div>
+             </div>
+           )}
+         </div>
       </div>
 
       {tab === "chat" && (

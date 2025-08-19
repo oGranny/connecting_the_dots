@@ -64,3 +64,23 @@ export function bucketize(selection, contexts = []) {
   }
   return buckets;
 }
+
+export async function ragQueryHybrid(q, opts = {}) {
+  const payload = { q, ...opts };
+  // remove undefined keys to keep payload clean
+  Object.keys(payload).forEach((k) => payload[k] === undefined && delete payload[k]);
+
+  const r = await fetch(`${API_BASE}/api/rag/query-hybrid`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`Hybrid RAG ${r.status}`);
+  return r.json();
+}
+
+export function openPdfAt(fileName, page) {
+  try {
+    window.dispatchEvent(new CustomEvent("switch-and-goto", { detail: { fileName, page } }));
+  } catch {}
+}
