@@ -10,100 +10,25 @@ export default function SelectionAnchor({
   const [visible, setVisible] = useState(false);
   const [pos, setPos] = useState({ x: 0, y: 0 }); // relative to page layer
   const latestPayload = useRef(null);
-  const selectingRef = useRef(false);        // true while a selection drag is in progress
-  const startedInTextRef = useRef(false);    // selection started inside text layer?
 
   useEffect(() => {
     if (!enabled) {
       setVisible(false);
       return;
     }
-
-    const pageEl = pageLayerRef?.current;
-    if (!pageEl) return;
-
-    const textLayer = pageEl.querySelector('.react-pdf__Page__textContent');
-    if (!textLayer) return;
-
-    // Force user-select only on text layer; nowhere else on the page container
-    pageEl.style.userSelect = 'none';
-    pageEl.style.webkitUserSelect = 'none';
-    textLayer.style.userSelect = 'text';
-    textLayer.style.webkitUserSelect = 'text';
-
-    // Helper: is DOM node inside the text layer?
-    const nodeInside = (node) => {
-      if (!node) return false;
-      const n = node.nodeType === Node.TEXT_NODE ? node.parentNode : node;
-      return textLayer.contains(n);
-    };
-
-    // Guard: only allow starting a selection inside the text layer
-    const onPointerDown = (e) => {
-      startedInTextRef.current = nodeInside(e.target);
-      selectingRef.current = startedInTextRef.current && e.button === 0; // left-button only
-      if (!startedInTextRef.current) {
-        // prevent browser from initiating a page-wide selection from non-text areas
-        e.preventDefault();
-        const sel = window.getSelection?.();
-        try { sel && sel.removeAllRanges && sel.removeAllRanges(); } catch {}
-      }
-    };
-
-    // End selection drag when mouse/touch released
-    const onPointerUp = () => {
-      selectingRef.current = false;
-    };
-
-    // Main selection change handler (runs very frequently)
     const onSelectionChange = () => {
+      if (!pageLayerRef?.current) return;
       const sel = window.getSelection();
-      if (!sel || sel.rangeCount === 0) {
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) {
         setVisible(false);
         return;
       }
-
-      // If selection did not start in text layer, keep UI hidden and clear selection
-      if (!startedInTextRef.current) {
-        setVisible(false);
-        try { sel.removeAllRanges(); } catch {}
-        return;
-      }
-
-      // Both ends must remain within the text layer
-      if (!nodeInside(sel.anchorNode) || !nodeInside(sel.focusNode)) {
-        setVisible(false);
-        try { sel.removeAllRanges(); } catch {}
-        return;
-      }
-
-      // Ignore collapsed selections
-      if (sel.isCollapsed) {
-        setVisible(false);
-        return;
-      }
-
-      // Compute rects and keep only those intersecting the text layer (with tolerance)
       const range = sel.getRangeAt(0);
-      const clientRects = Array.from(range.getClientRects());
-      if (!clientRects.length) {
-        setVisible(false);
-        return;
-      }
+      const rects = Array.from(range.getClientRects());
+      if (!rects.length) return;
 
-      const textRect = expandRect(textLayer.getBoundingClientRect(), 10); // 10px tolerance
-      const filtered = clientRects.filter((r) => rectIntersects(r, textRect));
-      if (!filtered.length) {
-        setVisible(false);
-        try { sel.removeAllRanges(); } catch {}
-        return;
-      }
-
-      // Project to page-relative coords
-      const pageRect = pageEl.getBoundingClientRect();
-      const rectsOnPage = filtered
-        .map((r) => intersectRect(r, pageRect))
-        .filter(Boolean);
+      const pageRect = pageLayerRef.current.getBoundingClientRect();
+      const rectsOnPage = rects.map((r) => intersectRect(r, pageRect)).filter(Boolean);
       if (!rectsOnPage.length) {
         setVisible(false);
         return;
@@ -115,9 +40,9 @@ export default function SelectionAnchor({
         w: r.width / pageRect.width,
         h: r.height / pageRect.height,
       }));
-
       const text = sel.toString();
       const last = rectsOnPage[rectsOnPage.length - 1];
+
       setPos({
         x: clamp((last.left + last.width / 2 - pageRect.left) / pageRect.width, 0, 1),
         y: clamp((last.bottom - pageRect.top) / pageRect.height, 0, 1),
@@ -127,24 +52,8 @@ export default function SelectionAnchor({
       setVisible(true);
     };
 
-    // Attach listeners
-    pageEl.addEventListener('pointerdown', onPointerDown, { capture: true });
-    window.addEventListener('pointerup', onPointerUp, { passive: true });
-    document.addEventListener('selectionchange', onSelectionChange, { passive: true });
-
-    // Cleanup
-    return () => {
-      pageEl.removeEventListener('pointerdown', onPointerDown, { capture: true });
-      window.removeEventListener('pointerup', onPointerUp);
-      document.removeEventListener('selectionchange', onSelectionChange);
-      try {
-        // restore defaults
-        pageEl.style.userSelect = '';
-        pageEl.style.webkitUserSelect = '';
-        textLayer.style.userSelect = '';
-        textLayer.style.webkitUserSelect = '';
-      } catch {}
-    };
+    document.addEventListener("selectionchange", onSelectionChange);
+    return () => document.removeEventListener("selectionchange", onSelectionChange);
   }, [enabled, pageLayerRef]);
 
   useEffect(() => {
@@ -209,18 +118,3 @@ function intersectRect(a, b) {
   if (w <= 0 || h <= 0) return null;
   return { left, top, right, bottom, width: w, height: h };
 }
-function expandRect(r, pad) {
-  return {
-    left: r.left - pad,
-    top: r.top - pad,
-    right: r.right + pad,
-    bottom: r.bottom + pad,
-    width: r.width + pad * 2,
-    height: r.height + pad * 2,
-  };
-}
-function rectIntersects(a, b) {
-  return !(a.right < b.left || a.left > b.right || a.bottom < b.top || a.top > b.bottom);
-}
-
-// Note: we clear native selection when it escapes the text layer to prevent accidental full-page selection

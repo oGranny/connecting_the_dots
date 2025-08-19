@@ -18,10 +18,10 @@ export function SegButton({ active, onClick, icon, label, hint }) {
       className={`h-9 px-3 flex items-center gap-2 text-sm ${
         active ? "bg-white/15 text-slate-100" : "text-slate-200 hover:bg-white/10"
       }`}
-      title={hint ? (label ? `${label} (${hint})` : hint) : label}
+      title={hint ? `${label} (${hint})` : label}
     >
       {icon}
-      {label ? <span className="hidden sm:inline">{label}</span> : null}
+      <span className="hidden sm:inline">{label}</span>
     </button>
   );
 }
