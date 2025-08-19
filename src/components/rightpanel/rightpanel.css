@@ -1,0 +1,31 @@
+/* Dark, rounded, subtle scrollbar for the right panel */
+.themed-scrollbar {
+  /* Firefox */
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255,255,255,0.28) transparent;
+  /* keep layout stable when scrollbar appears */
+  scrollbar-gutter: stable both-edges;
+}
+
+/* WebKit (Chrome/Safari/Edge) */
+.themed-scrollbar::-webkit-scrollbar {
+  width: 10px;
+}
+.themed-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.themed-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255,255,255,0.28);
+  border-radius: 9999px;
+  border: 2px solid transparent;        /* creates inset look */
+  background-clip: padding-box;
+}
+.themed-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255,255,255,0.42);
+}
+.themed-scrollbar::-webkit-scrollbar-thumb:active {
+  background: rgba(255,255,255,0.58);
+}
+.themed-scrollbar::-webkit-scrollbar-corner {
+  background: transparent;
+}

@@ -33,3 +33,4 @@ pydub>=0.25.0
 
 
 google-genai==1.2.0
+azure-cognitiveservices-speech==1.45.0
