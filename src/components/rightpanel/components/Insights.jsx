@@ -329,162 +329,162 @@ export function InsightsCard({ selection, answer, buckets = EMPTY_BUCKETS, activ
   );
 }
 
-export default function ChatPanel({ activeFile, onFileSelect, files }) {
-  const [messages, setMessages] = useState([
-    { role: "assistant", content: "Hi! I'm your doc AI. Select text in the PDF to see overlapping, contradictory, examples, and more." },
-  ]);
-  const [input, setInput] = useState("");
-  const [tab, setTab] = useState("insights");
-  const [lastSelection, setLastSelection] = useState("");
-  const [podcastWorking, setPodcastWorking] = useState(false);
-  const [insightsLoading, setInsightsLoading] = useState(false);
-  const viewRef = useRef(null);
+// export default function ChatPanel({ activeFile, onFileSelect, files }) {
+//   const [messages, setMessages] = useState([
+//     { role: "assistant", content: "Hi! I'm your doc AI. Select text in the PDF to see overlapping, contradictory, examples, and more." },
+//   ]);
+//   const [input, setInput] = useState("");
+//   const [tab, setTab] = useState("insights");
+//   const [lastSelection, setLastSelection] = useState("");
+//   const [podcastWorking, setPodcastWorking] = useState(false);
+//   const [insightsLoading, setInsightsLoading] = useState(false);
+//   const viewRef = useRef(null);
 
-  // viewer selections -> "doc-anchor"
-  useEffect(() => {
-    async function handleAnchor(e) {
-      const { text } = e.detail || {};
-      const sel = (text || "").trim();
-      if (!sel) return;
+//   // viewer selections -> "doc-anchor"
+//   useEffect(() => {
+//     async function handleAnchor(e) {
+//       const { text } = e.detail || {};
+//       const sel = (text || "").trim();
+//       if (!sel) return;
 
-      setLastSelection(sel);
-      setInsightsLoading(true);
+//       setLastSelection(sel);
+//       setInsightsLoading(true);
 
-      setMessages((m) => [
-        ...m,
-        { role: "user", content: `🔎 Selected: "${sel.length > 200 ? sel.slice(0, 200) + "…" : sel}"` },
-      ]);
+//       setMessages((m) => [
+//         ...m,
+//         { role: "user", content: `🔎 Selected: "${sel.length > 200 ? sel.slice(0, 200) + "…" : sel}"` },
+//       ]);
 
-      try {
-        const res = await ragQuery(sel, 10);
-        const buckets = bucketize(sel, res.contexts || []);
-        setMessages((m) => [
-          ...m,
-          { role: "assistant_insights", selection: sel, answer: res.answer, buckets },
-        ]);
-      } catch (err) {
-        setMessages((m) => [
-          ...m,
-          { role: "assistant", content: `Failed to fetch insights: ${String(err.message || err)}` },
-        ]);
-      } finally {
-        setInsightsLoading(false);
-      }
-    }
+//       try {
+//         const res = await ragQuery(sel, 10);
+//         const buckets = bucketize(sel, res.contexts || []);
+//         setMessages((m) => [
+//           ...m,
+//           { role: "assistant_insights", selection: sel, answer: res.answer, buckets },
+//         ]);
+//       } catch (err) {
+//         setMessages((m) => [
+//           ...m,
+//           { role: "assistant", content: `Failed to fetch insights: ${String(err.message || err)}` },
+//         ]);
+//       } finally {
+//         setInsightsLoading(false);
+//       }
+//     }
     
-    window.addEventListener("doc-anchor", handleAnchor);
-    return () => window.removeEventListener("doc-anchor", handleAnchor);
-  }, []);
+//     window.addEventListener("doc-anchor", handleAnchor);
+//     return () => window.removeEventListener("doc-anchor", handleAnchor);
+//   }, []);
 
-  // free-typed questions
-  const send = useCallback(async (text) => {
-    const t = text.trim();
-    if (!t) return;
-    setMessages((m) => [...m, { role: "user", content: t }]);
-    setInput("");
-    setInsightsLoading(true);
+//   // free-typed questions
+//   const send = useCallback(async (text) => {
+//     const t = text.trim();
+//     if (!t) return;
+//     setMessages((m) => [...m, { role: "user", content: t }]);
+//     setInput("");
+//     setInsightsLoading(true);
     
-    try {
-      const res = await ragQuery(t, 10);
-      const buckets = bucketize(t, res.contexts || []);
-      setMessages((m) => [
-        ...m,
-        { role: "assistant_insights", selection: t, answer: res.answer, buckets },
-      ]);
-    } catch (err) {
-      setMessages((m) => [
-        ...m,
-        { role: "assistant", content: `Failed to fetch: ${String(err.message || err)}` },
-      ]);
-    } finally {
-      setInsightsLoading(false);
-    }
-  }, []);
+//     try {
+//       const res = await ragQuery(t, 10);
+//       const buckets = bucketize(t, res.contexts || []);
+//       setMessages((m) => [
+//         ...m,
+//         { role: "assistant_insights", selection: t, answer: res.answer, buckets },
+//       ]);
+//     } catch (err) {
+//       setMessages((m) => [
+//         ...m,
+//         { role: "assistant", content: `Failed to fetch: ${String(err.message || err)}` },
+//       ]);
+//     } finally {
+//       setInsightsLoading(false);
+//     }
+//   }, []);
 
-  const visible = messages.filter((m) => {
-    if (tab === "insights") return m.role === "assistant_insights";
-    if (tab === "chat") return m.role !== "assistant_insights";
-    return false;
-  });
+//   const visible = messages.filter((m) => {
+//     if (tab === "insights") return m.role === "assistant_insights";
+//     if (tab === "chat") return m.role !== "assistant_insights";
+//     return false;
+//   });
 
-  return (
-    <div className="h-full min-h-0 flex flex-col">
-      <TopTabs tab={tab} setTab={setTab} podcastWorking={podcastWorking} />
+//   return (
+//     <div className="h-full min-h-0 flex flex-col">
+//       <TopTabs tab={tab} setTab={setTab} podcastWorking={podcastWorking} />
 
-      <div
-        ref={viewRef}
-        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 themed-scrollbar"
-        id={`panel-${tab}`}
-        role="tabpanel"
-        aria-labelledby={`${tab}-tab`}
-      >
-        <div hidden={tab !== "podcast"}>
-          <PodcastPanel
-            activeFile={activeFile}
-            lastSelection={lastSelection}
-            onWorkingChange={setPodcastWorking}
-          />
-        </div>
+//       <div
+//         ref={viewRef}
+//         className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 themed-scrollbar"
+//         id={`panel-${tab}`}
+//         role="tabpanel"
+//         aria-labelledby={`${tab}-tab`}
+//       >
+//         <div hidden={tab !== "podcast"}>
+//           <PodcastPanel
+//             activeFile={activeFile}
+//             lastSelection={lastSelection}
+//             onWorkingChange={setPodcastWorking}
+//           />
+//         </div>
        
-        <div hidden={tab !== "insights"}>
-          {insightsLoading && <InsightsLoading />}
-          {visible.length ? (
-            visible.map((m, i) => (
-              <InsightsCard
-                key={`ins-${i}`}
-                selection={m.selection}
-                answer={m.answer}
-                buckets={m.buckets}
-                activeFile={activeFile}
-                onFileSelect={onFileSelect}
-                files={files}
-              />
-            ))
-          ) : (
-            !insightsLoading && (
-              <div className="text-xs text-slate-400 px-2">
-                No insights yet. Select text in the PDF or ask a question from the Chat tab.
-              </div>
-            )
-          )}
-        </div>
+//         <div hidden={tab !== "insights"}>
+//           {insightsLoading && <InsightsLoading />}
+//           {visible.length ? (
+//             visible.map((m, i) => (
+//               <InsightsCard
+//                 key={`ins-${i}`}
+//                 selection={m.selection}
+//                 answer={m.answer}
+//                 buckets={m.buckets}
+//                 activeFile={activeFile}
+//                 onFileSelect={onFileSelect}
+//                 files={files}
+//               />
+//             ))
+//           ) : (
+//             !insightsLoading && (
+//               <div className="text-xs text-slate-400 px-2">
+//                 No insights yet. Select text in the PDF or ask a question from the Chat tab.
+//               </div>
+//             )
+//           )}
+//         </div>
 
-        <div hidden={tab !== "chat"}>
-          {visible.map((m, i) => (
-            <div
-              key={`chat-${i}`}
-              className={cls(
-                "max-w-[92%] rounded-md px-3 py-2 text-sm",
-                m.role === "assistant"
-                  ? "bg-slate-800/40 text-slate-200 border border-slate-700"
-                  : "bg-slate-800/60 text-slate-200 ml-auto"
-              )}
-            >
-              {m.content}
-            </div>
-          ))}
-        </div>
-      </div>
+//         <div hidden={tab !== "chat"}>
+//           {visible.map((m, i) => (
+//             <div
+//               key={`chat-${i}`}
+//               className={cls(
+//                 "max-w-[92%] rounded-md px-3 py-2 text-sm",
+//                 m.role === "assistant"
+//                   ? "bg-slate-800/40 text-slate-200 border border-slate-700"
+//                   : "bg-slate-800/60 text-slate-200 ml-auto"
+//               )}
+//             >
+//               {m.content}
+//             </div>
+//           ))}
+//         </div>
+//       </div>
 
-      {tab === "chat" && (
-        <div className="p-3 border-t border-slate-700">
-          <div className="flex items-center gap-2">
-            <input
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && send(input)}
-              placeholder="Ask across your PDFs…"
-              className="flex-1 bg-slate-800/40 outline-none text-sm text-slate-200 placeholder:text-slate-400 px-3 py-2 rounded-md border border-slate-700 focus:ring-2 focus:ring-slate-500"
-            />
-            <button
-              onClick={() => send(input)}
-              className="px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-2 text-sm"
-            >
-              <Send size={16} />
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+//       {tab === "chat" && (
+//         <div className="p-3 border-t border-slate-700">
+//           <div className="flex items-center gap-2">
+//             <input
+//               value={input}
+//               onChange={(e) => setInput(e.target.value)}
+//               onKeyDown={(e) => e.key === "Enter" && send(input)}
+//               placeholder="Ask across your PDFs…"
+//               className="flex-1 bg-slate-800/40 outline-none text-sm text-slate-200 placeholder:text-slate-400 px-3 py-2 rounded-md border border-slate-700 focus:ring-2 focus:ring-slate-500"
+//             />
+//             <button
+//               onClick={() => send(input)}
+//               className="px-3 py-2 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-200 flex items-center gap-2 text-sm"
+//             >
+//               <Send size={16} />
+//             </button>
+//           </div>
+//         </div>
+//       )}
+//     </div>
+//   );
+// }

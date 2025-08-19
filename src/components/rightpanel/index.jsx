@@ -6,6 +6,7 @@ import PodcastPanel from "./components/PodcastPanel";
 import { InsightsCard, InsightsLoading } from "./components/Insights";
 import { ragQuery, bucketize } from "./lib/helpers";
 import "./rightpanel.css";
+import { MessageCircle, Search, Zap } from "lucide-react"; // Add these imports
 
 export default function ChatPanel({ activeFile, onFileSelect, files }) {
   const [messages, setMessages] = useState([
@@ -15,38 +16,9 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
   const [tab, setTab] = useState("insights");
   const [lastSelection, setLastSelection] = useState("");
   const [podcastWorking, setPodcastWorking] = useState(false);
-  const [insightsLoading, setInsightsLoading] = useState(false); // Add loading state
+  const [insightsLoading, setInsightsLoading] = useState(false);
 
   const viewRef = useRef(null);
-
-  // drag-to-scroll
-  const dragRef = useRef({ active: false, x: 0, y: 0, sl: 0, st: 0 });
-  function onMouseDown(e) {
-    if (e.button !== 0) return;
-    const el = viewRef.current;
-    if (!el) return;
-    const tag = e.target?.tagName?.toLowerCase();
-    if (["input", "textarea", "button"].includes(tag)) return;
-    dragRef.current = { active: true, x: e.clientX, y: e.clientY, sl: el.scrollLeft, st: el.scrollTop };
-    el.classList.add("cursor-grabbing", "select-none");
-    el.classList.remove("cursor-grab");
-  }
-  function onMouseMove(e) {
-    const el = viewRef.current;
-    const s = dragRef.current;
-    if (!el || !s.active) return;
-    if ((e.buttons & 1) === 0) return endDrag();
-    e.preventDefault();
-    el.scrollLeft = s.sl - (e.clientX - s.x);
-    el.scrollTop = s.st - (e.clientY - s.y);
-  }
-  function endDrag() {
-    const el = viewRef.current;
-    dragRef.current.active = false;
-    if (!el) return;
-    el.classList.add("cursor-grab");
-    el.classList.remove("cursor-grabbing", "select-none");
-  }
 
   // auto-scroll on new messages or tab switch
   useEffect(() => {
@@ -65,7 +37,7 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
       if (!sel) return;
 
       setLastSelection(sel);
-      setInsightsLoading(true); // Start loading
+      setInsightsLoading(true);
 
       setMessages((m) => [
         ...m,
@@ -85,7 +57,7 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
           { role: "assistant", content: `Failed to fetch insights: ${String(err.message || err)}` },
         ]);
       } finally {
-        setInsightsLoading(false); // Stop loading
+        setInsightsLoading(false);
       }
     }
     
@@ -99,7 +71,7 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
     if (!t) return;
     setMessages((m) => [...m, { role: "user", content: t }]);
     setInput("");
-    setInsightsLoading(true); // Start loading
+    setInsightsLoading(true);
     
     try {
       const res = await ragQuery(t, 10);
@@ -114,7 +86,7 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
         { role: "assistant", content: `Failed to fetch: ${String(err.message || err)}` },
       ]);
     } finally {
-      setInsightsLoading(false); // Stop loading
+      setInsightsLoading(false);
     }
   }, []);
 
@@ -130,14 +102,10 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
 
       <div
         ref={viewRef}
-        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 themed-scrollbar"
+        className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 themed-scroll"
         id={`panel-${tab}`}
         role="tabpanel"
         aria-labelledby={`${tab}-tab`}
-        onMouseDown={onMouseDown}
-        onMouseMove={onMouseMove}
-        onMouseUp={endDrag}
-        onMouseLeave={endDrag}
       >
         <div hidden={tab !== "podcast"}>
           <PodcastPanel
@@ -163,8 +131,34 @@ export default function ChatPanel({ activeFile, onFileSelect, files }) {
             ))
           ) : (
             !insightsLoading && (
-              <div className="text-xs text-slate-400 px-2">
-                No insights yet. Select text in the PDF or ask a question from the Chat tab.
+              <div className="flex flex-col items-center justify-center text-center py-3 px-4">
+                {/* Search Icon styled like podcast tab */}
+                <div className="rounded-2xl p-5 bg-white/5 border border-white/20 mb-4">
+                  <Search size={64} className="text-slate-300" />
+                </div>
+
+                {/* Title */}
+                <h3 className="text-lg font-semibold text-slate-200 mb-2">
+                  Discover Insights
+                </h3>
+
+                {/* Description */}
+                <p className="text-sm text-slate-400 leading-relaxed max-w-xs">
+                  Select any text in your PDF to instantly find related content, 
+                  contradictions, and examples across all your documents.
+                </p>
+
+                {/* Action hints */}
+                <div className="mt-6 flex items-center gap-4 text-xs text-slate-500">
+                  <div className="flex items-center gap-1.5">
+                    <div className="w-2 h-2 bg-blue-400/50 rounded-full"></div>
+                    <span>Select text</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <MessageCircle className="w-3 h-3" />
+                    <span>Ask questions</span>
+                  </div>
+                </div>
               </div>
             )
           )}
