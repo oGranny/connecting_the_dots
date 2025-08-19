@@ -43,3 +43,8 @@ class Config:
     META_PATH = os.path.join(RAG_DIR, "meta.jsonl")
     EMBED_CACHE_PATH = os.path.join(RAG_DIR, "embed_cache.jsonl")
     FILES_REG_PATH = os.path.join(RAG_DIR, "files_registry.json")
+
+    # Answer quality settings
+    MIN_ANSWER_LENGTH = 20  # Minimum acceptable answer length
+    ANSWER_RETRY_ATTEMPTS = 3
+    FALLBACK_TEMPERATURE_INCREMENT = 0.2

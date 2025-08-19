@@ -35,10 +35,23 @@ def rag_query():
         return jsonify({"error": "Provide 'q'"}), 400
     try:
         resp = rag.answer(q, top_k)
+        
+        # Validate that we have a meaningful answer
+        answer = (resp.get("answer") or "").strip()
+        if not answer:
+            # Fallback response when LLM gives empty answer
+            contexts = resp.get("contexts", [])
+            if contexts:
+                resp["answer"] = f"I found {len(contexts)} relevant sections related to your query. Please check the context sources below for detailed information."
+            else:
+                resp["answer"] = "I couldn't find relevant information in the uploaded documents for your query."
+        
         resp["_meta"] = {
             "isIndexing": rag.is_indexing,
             "chunks": int(0 if rag.V is None else rag.V.shape[0]),
         }
+        print(f"Query: {q[:50]}... | Answer length: {len(resp.get('answer', ''))}")
         return jsonify(resp)
     except Exception as e:
+        print(f"RAG query failed: {str(e)}")
         return jsonify({"error": "rag-failed", "detail": str(e)}), 500

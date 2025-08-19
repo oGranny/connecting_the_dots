@@ -192,48 +192,100 @@ def _first_sentence(s: str, fallback_words: int = 30) -> str:
     return _shorten_by_words(s, fallback_words)
 
 def _nice_pdf_name(pdf_name: str) -> str:
-    # input looks like "hash_Original.pdf" — keep the tail
+    # input looks like "hash_Original.pdf" — keep the tail and replace underscores with spaces
     base = os.path.basename(pdf_name or "")
-    return base.split("_", 1)[-1] if "_" in base else base or "document.pdf"
+    name = base.split("_", 1)[-1] if "_" in base else base or "document.pdf"
+    # Replace underscores with spaces for better readability
+    return name.replace("_", " ")
+
+def _context_block_for_llm(contexts: List[Dict[str, Any]], budget_chars: int = 1800) -> str:
+    used = 0
+    parts = []
+    for c in contexts:
+        t = (c.get("text") or "").strip()
+        # Remove file name from the tag - only keep rank and page info
+        # No file names shown to LLM, so no underscore issue here
+        tag = f"[Source {c.get('rank','?')}] Page {c.get('page')}:\n"
+        chunk = (tag + t + "\n\n")
+        if used + len(chunk) > budget_chars:
+            break
+        parts.append(chunk)
+        used += len(chunk)
+    return "".join(parts).strip()
+import re
+
+def _scrub_file_mentions(s: str) -> str:
+    if not s:
+        return s
+    # remove explicit filenames like foo.pdf / bar.docx etc.
+    s = re.sub(r'\b[\w\-.]+\.(?:pdf|docx?|pptx?|xlsx)\b', 'the reference', s, flags=re.I)
+    # remove [Source 1], [Doc: …], bracketed refs
+    s = re.sub(r'\[(?:source|doc|document|file)[^\]]*\]', '', s, flags=re.I)
+    # soften generic mentions like "from document 3", "per file 2"
+    s = re.sub(r'\b(?:document|file|source)\s*\d+\b', 'the reference', s, flags=re.I)
+    # collapse leftover multiple spaces
+    return " ".join(s.split())
 
 def _summarize_context_points(contexts: List[Dict[str, Any]], max_points: int = 4) -> List[str]:
     pts = []
     for c in (contexts or [])[:max_points]:
         s = _first_sentence(c.get("text", ""), 28)
-        src = f"[{c.get('rank', '?')}] {_nice_pdf_name(c.get('pdf_name'))} p.{c.get('page')}"
-        pts.append(f"{s} ({src}).")
+        if s:
+            # DO NOT include doc names, pages, or "Source x" in the transcript
+            pts.append(s)
     return pts
 
 def _compose_from_selection(selection: str, context_points: List[str], target_words: int) -> List[str]:
-    # Outline tailored to the selection + contexts
-    # We carve ~25–40 words per line, ending near target_words.
+    # Randomize the fallback opening as well
+    import random
+    
+    openings = [
+        f"So we came across this interesting point about {selection[:50]}...",
+        f"There's something fascinating here about {selection[:50]}...", 
+        f"This caught our attention - {selection[:50]}...",
+        f"We were reading about {selection[:50]} and found...",
+        f"Here's an intriguing perspective on {selection[:50]}...",
+        f"Let's dive into this idea about {selection[:50]}...",
+    ]
+    
     blocks: List[str] = []
-    sel = selection.strip()
-    intro = (
-        f"You highlighted: “{sel}”. Let’s unpack what it means and how the documents support it."
-    )
+    # Use random opening instead of always "You highlighted"
+    intro = random.choice(openings)
     blocks.append(intro)
 
     if context_points:
-        blocks.append("Here is what the top sources indicate, in short beats:")
+        transitions = [
+            "Here's what the sources tell us:",
+            "The documents reveal some key points:",
+            "Looking at the evidence, we find:",
+            "The research shows:",
+            "From what we've read:",
+        ]
+        blocks.append(random.choice(transitions))
         for pt in context_points:
             blocks.append(pt)
 
     blocks.append("How to apply it in practice, without overthinking:")
-    blocks.append("Start from the exact wording you highlighted, define the terms, then test it on a small example.")
+    blocks.append("Start from the exact wording, define the terms, then test it on a small example.")
 
     blocks.append("Common pitfall to avoid:")
     blocks.append("Mixing definitions with examples—keep the definition crisp and let examples illustrate, not redefine.")
 
     blocks.append("Quick checklist:")
-    blocks.append("Definition clear? Source cited? Example concrete? Edge case noted? If yes, you’re in good shape.")
+    blocks.append("Definition clear? Source cited? Example concrete? Edge case noted? If yes, you're in good shape.")
 
-    blocks.append("Final takeaway:")
+    endings = [
+        "The key takeaway here:",
+        "What this really means:",
+        "Bottom line:",
+        "To wrap this up:",
+        "The main insight:",
+    ]
+    blocks.append(random.choice(endings))
     blocks.append("Keep the claim anchored to sources; if contexts disagree, say so, then pick the scope that fits your use.")
 
     # Compact to target words by trimming each long line
     out: List[str] = []
-    # Aim ~12–14 turns
     want_turns = max(10, min(14, len(blocks)))
     per = max(18, int(target_words / want_turns))
     for b in blocks:
@@ -250,7 +302,7 @@ def build_transcript_from_selection(
     voice_b: str = DEFAULT_VOICE_B,
     rate: str = DEFAULT_RATE,
     pitch: str = DEFAULT_PITCH,
-    use_llm: bool = True,    # <--- NEW: toggle LLM
+    use_llm: bool = True,
 ) -> Dict[str, Any]:
     m = float(minutes) if minutes else DEFAULT_MINUTES
     total_words = _target_words(m)
@@ -262,15 +314,17 @@ def build_transcript_from_selection(
         points = _summarize_context_points(contexts, max_points=4)
         lines = _compose_from_selection(selection, points, total_words)
         turns = _alternate_speakers(lines)
+    turns = [Turn(t.speaker, _scrub_file_mentions(t.text)) for t in turns]
 
     words = sum(len(t.text.split()) for t in turns)
     est_sec = int(words / WPM * 60)
     ssml = _to_ssml(turns, voice_a, voice_b, rate, pitch)
 
+    # Use the updated _nice_pdf_name function in the manifest
     manifest = [
         {
             "rank": c.get("rank"),
-            "pdf_name": _nice_pdf_name(c.get("pdf_name")),
+            "pdf_name": _nice_pdf_name(c.get("pdf_name")),  # This now replaces underscores with spaces
             "page": c.get("page"),
             "start": c.get("start"),
             "end": c.get("end"),
@@ -295,7 +349,9 @@ def _context_block_for_llm(contexts: List[Dict[str, Any]], budget_chars: int = 1
     parts = []
     for c in contexts:
         t = (c.get("text") or "").strip()
-        tag = f"[{c.get('rank','?')}] { _nice_pdf_name(c.get('pdf_name')) } p.{c.get('page')} ({c.get('start')}-{c.get('end')}):\n"
+        # Remove file name from the tag - only keep rank and page info
+        # No file names shown to LLM, so no underscore issue here
+        tag = f"[Source {c.get('rank','?')}] Page {c.get('page')}:\n"
         chunk = (tag + t + "\n\n")
         if used + len(chunk) > budget_chars:
             break
@@ -305,43 +361,145 @@ def _context_block_for_llm(contexts: List[Dict[str, Any]], budget_chars: int = 1
 
 def _llm_dialog_from_selection(selection: str, contexts: List[Dict[str, Any]], target_words: int) -> List[Turn]:
     """
-    Ask the LLM to write a 2-host script that strictly uses the provided contexts.
-    Output format: lines starting with `A:` or `B:`.
+    Two-step pipeline:
+    1) Extract compact 'beats' (claims, counterpoints, examples, tips, pitfalls, takeaway) strictly from context.
+    2) Render an A/B conversation from those beats with short, natural turns.
     """
-    client = ensure_genai_client()  # requires GOOGLE_API_KEY
-    ctx = _context_block_for_llm(contexts)
-    sys = (
-        "You are a podcast scriptwriter. Write a natural, concise two-host conversation "
-        "(speakers 'A' and 'B') that strictly uses ONLY the provided PDF excerpts. "
-        f"Total ~{target_words} words. Do NOT invent facts. Include an intro, key beats, and a short outro. "
-        "Output ONLY lines that start with 'A:' or 'B:'; no extra commentary. "
-        "Make sure to only use words that are in english, dont use words that has foreign characters like accent "
-        "also dont use bullets or any other special characters."
+    client = ensure_genai_client()
+    from google.genai import types
+    ctx = _context_block_for_llm(contexts, budget_chars=1400)  # tighter, higher signal
+
+    # ---- STEP 1: extract beats as JSON ----
+    sys1 = (
+        "You are a careful analyst. From the provided context, extract only what is present. "
+        "Return STRICT JSON with keys: hook, claims, counterpoints, examples, tips, pitfalls, takeaway. "
+        "Format:\n"
+        "{\n"
+        '  "hook": "one-sentence hook",\n'
+        '  "claims": ["...", "..."],\n'
+        '  "counterpoints": ["...", "..."],\n'
+        '  "examples": ["...", "..."],\n'
+        '  "tips": ["...", "..."],\n'
+        '  "pitfalls": ["...", "..."],\n'
+        '  "takeaway": "one-sentence conclusion"\n'
+        "}\n"
+        "If something is not in the context, omit it rather than inventing it."
     )
-    user = (
-        f"Highlighted sentence:\n{selection}\n\n"
-        f"PDF EXCERPTS:\n{ctx}\n\n"
-        "Write the script now."
+    
+    user1 = (
+        f"TOPIC: {selection}\n\n"
+        "CONTEXT (do not quote sources; never mention file names/pages/ids):\n"
+        f"{ctx}\n\n"
+        "Extract the beats as STRICT JSON only. No prose outside JSON."
     )
-    from google.genai import types  # available because you already use google-genai
-    resp = client.models.generate_content(
+    resp1 = client.models.generate_content(
         model=Config.GEN_MODEL,
-        contents=f"{sys}\n\n{user}",
+        contents=f"{sys1}\n\n{user1}",
         config=types.GenerateContentConfig(
-            temperature=Config.TEMPERATURE,
-            max_output_tokens=Config.MAX_OUTPUT_TOKENS_DEFAULT
+            temperature=0.35,          # quality > variety
+            top_p=0.8,
+            max_output_tokens=min(800, Config.MAX_OUTPUT_TOKENS_DEFAULT),
         ),
     )
-    text = (getattr(resp, "text", "") or "").strip()
+    raw = (getattr(resp1, "text", "") or "").strip()
+
+    import json, re
+    def _json_from_text(t: str) -> dict:
+        # robustly parse JSON from plain text or ```json blocks
+        m = re.search(r"\{.*\}", t, re.S)
+        if not m:
+            return {}
+        try:
+            return json.loads(m.group(0))
+        except Exception:
+            return {}
+
+    beats = _json_from_text(raw) or {}
+    hook         = beats.get("hook") or ""
+    claims       = [s for s in (beats.get("claims") or []) if s.strip()]
+    counter      = [s for s in (beats.get("counterpoints") or []) if s.strip()]
+    examples     = [s for s in (beats.get("examples") or []) if s.strip()]
+    tips         = [s for s in (beats.get("tips") or []) if s.strip()]
+    pitfalls     = [s for s in (beats.get("pitfalls") or []) if s.strip()]
+    takeaway     = beats.get("takeaway") or ""
+
+    # fallback if step 1 failed
+    if not (hook or claims or examples or takeaway):
+        points = _summarize_context_points(contexts, max_points=4)
+        lines = _compose_from_selection(selection, points, target_words)
+        return _alternate_speakers(lines)
+
+    # ---- STEP 2: render script from beats ----
+    # hard limits for turn sizes to keep it snappy
+    want_turns = max(10, min(14, target_words // 22))
+    max_words_per_turn = 36
+
+    sys2 = (
+        "Write a natural two-host conversation (A and B) in Indian English/neutral English. "
+        "Use only the provided BEATS; do not add facts. "
+        "NEVER mention or allude to files, documents, pages, PDFs, sources, citations, or numbers like 'Source 2'. "
+        "If such tokens appear in input, IGNORE them. "
+        "Keep turns short (~18–36 words). Vary rhythm a bit. Include a little tension, resolve it, and end with a crisp takeaway."
+    )
+    # Build a compact beat sheet for the model
+    def _join(label, items):
+        return f"{label}:\n" + ("\n".join(f"- {i}" for i in items) if items else "-")
+
+    beats_sheet = "\n\n".join(filter(None, [
+        f"Hook: {hook}" if hook else "",
+        _join("Claims", claims),
+        _join("Counterpoints", counter),
+        _join("Examples", examples),
+        _join("Tips", tips),
+        _join("Pitfalls", pitfalls),
+        f"Takeaway: {takeaway}" if takeaway else "",
+    ]))
+
+    user2 = (
+        f"TOPIC: {selection}\n\n"
+        f"BEATS (only use these):\n{beats_sheet}\n\n"
+        f"Target total words: ~{target_words}. "
+        f"Write exactly {want_turns} lines, each starting with 'A:' or 'B:'."
+    )
+
+    resp2 = client.models.generate_content(
+        model=Config.GEN_MODEL,
+        contents=f"{sys2}\n\n{user2}",
+        config=types.GenerateContentConfig(
+            temperature=0.45,          # lower = crisper structure
+            top_p=0.8,
+            max_output_tokens=min(1200, Config.MAX_OUTPUT_TOKENS_DEFAULT),
+        ),
+    )
+    text = (getattr(resp2, "text", "") or "").strip()
+
+    # parse to turns and enforce word caps
     lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
     turns: List[Turn] = []
+    who = "A"
     for ln in lines:
         if ln.startswith("A:"):
-            turns.append(Turn("A", ln[2:].strip()))
+            msg = ln[2:].strip()
+            who = "B"
         elif ln.startswith("B:"):
-            turns.append(Turn("B", ln[2:].strip()))
-    # fallback in case the model didn't follow the format
+            msg = ln[2:].strip()
+            who = "A"
+        else:
+            # recover: alternate speakers if tag is missing
+            msg = ln
+            who = "B" if who == "A" else "A"
+        # cap overly long lines
+        words = msg.split()
+        if len(words) > max_words_per_turn:
+            msg = " ".join(words[:max_words_per_turn]) + "…"
+        turns.append(Turn("A" if who == "B" else "B", msg))
+
+    # strict fallback if model returned junk
     if not turns:
-        turns = _alternate_speakers(_compose_from_selection(selection, _summarize_context_points(contexts, 4), target_words))
+        points = _summarize_context_points(contexts, max_points=4)
+        lines = _compose_from_selection(selection, points, target_words)
+        return _alternate_speakers(lines)
+    turns = [Turn(t.speaker, _scrub_file_mentions(t.text)) for t in turns]
+
     return turns
 

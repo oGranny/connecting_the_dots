@@ -29,7 +29,7 @@ def upload():
 
     index_async(saved_paths)
     return jsonify({"files": metas})
-
+    
 @bp.get("/api/files")
 def list_files():
     items = []

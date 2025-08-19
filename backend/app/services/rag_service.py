@@ -5,6 +5,7 @@ import uuid
 import time
 import threading
 from typing import List, Dict, Any, Tuple, Optional
+import logging
 
 import numpy as np
 import fitz
@@ -135,31 +136,77 @@ def make_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
         used += len(t)
         parts.append(f"[{c['rank']}] {c['pdf_name']} p.{c['page']} ({c['start']}-{c['end']}):\n{t}")
     ctx = "\n\n".join(parts)
+    
     head = (
-        "Generate insights related to the selected text from the provided PDF excerpts.\n"
-        "Focus on finding overlapping content, contradictory viewpoints, examples, definitions, and related concepts.\n"
-        "Provide contextual insights that enrich understanding of the selected text.\n"
-        "Ground all results strictly in the documents provided - do not add external knowledge.\n"
-        "If no relevant insights can be found in the excerpts, say you don't have enough information.\n"
-        "avoid using 'Based on the provided PDF excerpts' in the answer."
+        "You are a helpful document analyst. Based ONLY on the provided PDF excerpts below, "
+        "answer the user's question with specific insights and details.\n\n"
+        "IMPORTANT RULES:\n"
+        "- Use ONLY information from the provided excerpts\n"
+        "- Always provide a substantive answer if any relevant information exists\n"
+        "- If the excerpts contain relevant information, explain what they reveal\n"
+        "- Reference specific details, examples, or concepts from the excerpts\n"
+        "- If truly no relevant information exists, clearly state that\n"
+        "- NEVER give an empty response\n"
+        "- Write in a clear, informative style\n\n"
     )
-    return f"{head}\n\nQUESTION:\n{query}\n\nCONTEXTS:\n{ctx}\n\nAnswer:"
+    
+    return f"{head}QUESTION: {query}\n\nPDF EXCERPTS:\n{ctx}\n\nDETAILED ANSWER:"
 
 def generate_answer(query: str, contexts: List[Dict[str, Any]], model: str, temperature: float) -> str:
     client = ensure_genai_client()
-    prompt = make_prompt(query, contexts)
-
+    
     def _call():
         from google.genai import types
+        prompt = make_prompt(query, contexts)
         return client.models.generate_content(
             model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
-                temperature=temperature, max_output_tokens=Config.MAX_OUTPUT_TOKENS_DEFAULT),
+                temperature=temperature, 
+                max_output_tokens=Config.MAX_OUTPUT_TOKENS_DEFAULT
+            ),
         )
 
-    resp = with_retry(_call, _gen_limiter, Config.MAX_RETRIES, Config.BASE_BACKOFF, Config.MAX_BACKOFF)
-    return (getattr(resp, "text", None) or "").strip()
+    # Try generating answer up to 3 times if empty
+    for attempt in range(3):
+        try:
+            resp = with_retry(_call, _gen_limiter, Config.MAX_RETRIES, Config.BASE_BACKOFF, Config.MAX_BACKOFF)
+            answer = (getattr(resp, "text", None) or "").strip()
+            
+            if answer:  # Got a non-empty answer
+                return answer
+            elif attempt < 2:  # Retry with different temperature
+                temperature = min(0.9, temperature + 0.2)
+                print(f"Empty answer attempt {attempt + 1}, retrying with temperature {temperature}")
+                continue
+            else:  # Final attempt failed, provide fallback
+                print("LLM provided empty answer after 3 attempts, using fallback")
+                return generate_fallback_answer(query, contexts)
+                
+        except Exception as e:
+            if attempt < 2:
+                print(f"Answer generation failed attempt {attempt + 1}: {e}")
+                continue
+            else:
+                print(f"Answer generation failed after 3 attempts: {e}")
+                return generate_fallback_answer(query, contexts)
+
+def generate_fallback_answer(query: str, contexts: List[Dict[str, Any]]) -> str:
+    """Generate a structured fallback answer when LLM fails"""
+    if not contexts:
+        return f"I couldn't find relevant information about '{query}' in the uploaded documents."
+    
+    # Create a structured response from the contexts
+    key_points = []
+    for i, ctx in enumerate(contexts[:3]):  # Use top 3 contexts
+        snippet = ctx['text'][:200].strip()
+        if snippet:
+            key_points.append(f"• From {ctx.get('pdf_name', 'document')} (page {ctx.get('page', '?')}): {snippet}...")
+    
+    if key_points:
+        return f"Based on your query about '{query}', here are the most relevant findings:\n\n" + "\n".join(key_points)
+    else:
+        return f"I found {len(contexts)} potentially relevant sections for '{query}', but couldn't extract clear insights. Please check the source references."
 
 # ---- RAG Index
 class RAGIndex:
@@ -284,21 +331,28 @@ class RAGIndex:
             })
         return out
 
-    def answer(self, q: str, top_k: int) -> Dict[str, Any]:
-        hits = self.topk_search(q, top_k)
-        if not hits:
+    def answer(self, query: str, top_k: int = 10) -> Dict[str, Any]:
+        contexts = self.topk_search(query, top_k)
+        if not contexts:
             return {
                 "answer": "I couldn't find relevant information in the PDFs.",
                 "contexts": [],
                 "model": Config.GEN_MODEL,
                 "embedding_model": Config.EMBED_MODEL,
             }
-        ans = generate_answer(q, hits, Config.GEN_MODEL, Config.TEMPERATURE)
+        
+        # Generate answer
+        logging.info(f"Generating answer for query: {query[:50]}... with {len(contexts)} contexts")
+        answer_text = generate_answer(query, contexts, Config.GEN_MODEL, Config.TEMPERATURE)
+        
+        logging.info(f"Generated answer length: {len(answer_text)} characters")
+        if len(answer_text) < 10:
+            logging.warning(f"Very short answer generated: '{answer_text}'")
+        
         return {
-            "answer": ans,
-            "contexts": hits,
-            "model": Config.GEN_MODEL,
-            "embedding_model": Config.EMBED_MODEL,
+            "answer": answer_text,
+            "contexts": contexts,
+            "query": query
         }
 
 # Global RAG instance + async helper
