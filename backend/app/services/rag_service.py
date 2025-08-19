@@ -219,6 +219,71 @@ class RAGIndex:
         self.last_updated = None
         self._load_from_disk()
 
+    def _rewrite_meta_file(self):
+        # Rewrites the meta file from self.metas (full snapshot).
+        with open(Config.META_PATH, "w", encoding="utf-8") as f:
+            for r in self.metas:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+
+    def _remove_paths_from_index_locked(self, abs_paths: List[str]):
+        """Assumes self.lock is already held. Removes all rows/vectors for given pdf paths."""
+        if not abs_paths:
+            return
+
+        # Build a keep-mask so we can filter both metas and V consistently.
+        path_set = set(map(os.path.abspath, abs_paths))
+        keep_idxs = []
+        for i, m in enumerate(self.metas):
+            p = os.path.abspath(m.get("pdf_path", ""))
+            if p not in path_set:
+                keep_idxs.append(i)
+
+        # Nothing to drop
+        if len(keep_idxs) == len(self.metas):
+            return
+
+        # Filter metas
+        self.metas = [self.metas[i] for i in keep_idxs]
+
+        # Filter vectors (guard for partial writes)
+        if self.V is not None and self.V.size > 0:
+            n_vecs = int(self.V.shape[0])
+            n_meta = len(keep_idxs)
+            # keep only valid range then index
+            if n_vecs >= len(keep_idxs):
+                self.V = self.V[keep_idxs, :]
+            else:
+                # If vectors < metas (shouldn't happen but be safe), truncate metas to match.
+                self.metas = self.metas[:n_vecs]
+
+        # Update registry: drop removed files
+        for ap in path_set:
+            if ap in self.files_reg:
+                self.files_reg.pop(ap, None)
+
+        # Persist snapshot
+        self._rewrite_meta_file()
+        np.save(Config.VEC_PATH, self.V if self.V is not None else np.zeros((0, Config.EMBED_DIM), dtype=np.float32))
+        self._save_registry()
+        self.last_updated = time.time()
+
+    def remove_pdfs(self, pdf_paths: List[str]):
+        """Public method: remove files from index by absolute or relative paths."""
+        if not pdf_paths:
+            return
+        with self.lock:
+            # If indexing is in progress, we still proceed atomically under the same lock.
+            self._remove_paths_from_index_locked(pdf_paths)
+
+    def remove_by_ids(self, ids: List[str]):
+        """
+        Convenience: remove files by uploaded filename IDs (same as used in /uploads/<id>).
+        """
+        if not ids:
+            return
+        paths = [os.path.abspath(os.path.join(Config.UPLOAD_DIR, fid)) for fid in ids]
+        self.remove_pdfs(paths)
+
     def _load_from_disk(self):
         if os.path.exists(Config.META_PATH):
             with open(Config.META_PATH, "r", encoding="utf-8") as f:

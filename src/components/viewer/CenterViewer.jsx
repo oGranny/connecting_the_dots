@@ -6,14 +6,8 @@ import React, {
   useRef,
   useState,
 } from "react";
-import {
-  Download,
-  ZoomIn,
-  ZoomOut,
-  RotateCcw,
-  Pencil,
-  Eraser, // Add Eraser import
-} from "lucide-react";
+import { Download, ZoomIn, ZoomOut, RotateCcw, Pencil, Eraser, ChevronLeft, ChevronRight } from "lucide-react";
+
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
 import "react-pdf/dist/Page/TextLayer.css";
@@ -54,13 +48,15 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor, 
   // Per-page data
   const [highlightsByPage, setHighlightsByPage] = useState({});
   const [strokesByPage, setStrokesByPage] = useState({});
-
+  const [strokeWidth, setStrokeWidth] = useState(2); 
   // Refs for scrolling to page
   const pageRefs = useRef({});
 
   // Status to parent
   useEffect(() => onStatus?.({ page: currPage, fit: fitMode, zoom, view: viewMode }), [currPage, fitMode, zoom, viewMode, onStatus]);
   useBlockBrowserCtrlZoom(scrollRef);
+  const prevPage = () => scrollToPage(Math.max(1, (currPage || 1) - 1));
+  const nextPage = () => scrollToPage(Math.min(numPages || 1, (currPage || 1) + 1));
 
   // API to parent
   useEffect(() => {
@@ -534,6 +530,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor, 
                       drawColor={drawColor}
                       dpr={dpr}
                       strokes={strokesByPage[p] || []}
+                      drawWidth={strokeWidth}
                       onAddStroke={(s) => addStroke(p, s)}
                       onEraseStrokes={(strokeIndices) => eraseStrokes(p, strokeIndices)} // Add erase callback
                       highlights={highlightsByPage[p] || []}

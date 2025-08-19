@@ -18,7 +18,7 @@ import os, requests
 def _azure_cog_tts_ssml_to_mp3(ssml: str) -> bytes:
     key = os.getenv("AZURE_SPEECH_KEY") or os.getenv("SPEECH_KEY")
     region = "centralindia"
-    # region = os.getenv("AZURE_SPEECH_REGION") or os.getenv("SPEECH_REGION") or "centralindia"
+    # region = os.getenv("") or os.getenv("SPEECH_REGION") or "centralindia"
     if not key:
         raise RuntimeError("AZURE_SPEECH_KEY missing")
 
@@ -47,6 +47,15 @@ def _azure_cog_tts_ssml_to_mp3(ssml: str) -> bytes:
 
     raise RuntimeError(f"Azure TTS failed. Tried formats {try_formats}. Last error: {last}")
 
+def _turns_to_plain_text(turns):
+    # Keep it simple: "A: ...\nB: ..." (good for single-voice TTS)
+    lines = []
+    for t in (turns or []):
+        spk = (t.get("speaker") or "").strip() or "A"
+        msg = (t.get("text") or "").strip()
+        if msg:
+            lines.append(f"{spk}: {msg}")
+    return "\n".join(lines).strip()
 
 def _azure_speech_config():
     if speechsdk is None:
@@ -179,8 +188,8 @@ def podcast_from_selection():
     })
 
 
-@bp.post("/api/podcast/speak")
-def podcast_speak():
+@bp.post("/api/podcast/speak-ssml")   
+def podcast_speak_ssml():             
     data = request.get_json(force=True, silent=True) or {}
     ssml = (data.get("ssml") or "").strip()
     if not ssml:
@@ -208,12 +217,16 @@ def podcast_from_selection_audio():
     contexts = raw_contexts if isinstance(raw_contexts, list) and raw_contexts else rag.topk_search(selection, top_k)
 
     minutes = float(data.get("minutes", 2.5))
-    voice_a = data.get("voiceA", "en-IN-NeerjaNeural")
-    voice_b = data.get("voiceB", "en-IN-PrabhatNeural")
+    voice_a = data.get("voiceA", "en-IN-NeerjaNeural")   # not used by Azure OpenAI single-voice API
+    voice_b = data.get("voiceB", "en-IN-PrabhatNeural")  # not used by Azure OpenAI single-voice API
     rate = data.get("rate", "0%")
     pitch = data.get("pitch", "0st")
 
+    # Choose a single Azure OpenAI voice (the REST in generate_audio.py is single-voice)
+    azure_voice = data.get("azureVoice") or os.getenv("AZURE_TTS_VOICE", "alloy")
+
     try:
+        # 1) Build the script (turns)
         res = build_transcript_from_selection(
             selection=selection,
             contexts=contexts,
@@ -222,30 +235,69 @@ def podcast_from_selection_audio():
             voice_b=voice_b,
             rate=rate,
             pitch=pitch,
+            use_llm=True,
         )
-        ssml = res["ssml"]  # built by _to_ssml above
-        try:
-            mp3_bytes = _azure_cog_tts_ssml_to_mp3(ssml)
-        except Exception as e_first:
-            # Fallback 1: switch to very common US voices (rules out region-specific voice quirks)
-            safeA, safeB = "en-US-AriaNeural", "en-US-GuyNeural"
-            from ..services.podcast_service import _to_ssml as _to_ssml_mv, _to_ssml_single_voice
-            ssml_mv = _to_ssml_mv(
-                [type("T", (), t) for t in res["turns"]],  # adapt dicts -> objects if needed
-                voice_a=safeA, voice_b=safeB, rate=rate, pitch=pitch
-            )
-            try:
-                mp3_bytes = _azure_cog_tts_ssml_to_mp3(ssml_mv)
-            except Exception as e_second:
-                # Fallback 2: single voice (most reliable across regions)
-                ssml_sv = _to_ssml_single_voice(
-                    [type("T", (), t) for t in res["turns"]],
-                    voice=safeA, rate=rate, pitch=pitch
-                )
-                mp3_bytes = _azure_cog_tts_ssml_to_mp3(ssml_sv)
+
+        # 2) Flatten to plain text for Azure OpenAI TTS
+        text_for_tts = _turns_to_plain_text(res["turns"])
+        if not text_for_tts:
+            print("Empty script generated")
+            return jsonify({"error": "empty-script"}), 500
+
+        # 3) Generate MP3 via your Azure OpenAI wrapper
+        from ..services.generate_audio import generate_audio as gen_audio_tmp
+        import tempfile, io
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            out_fp = os.path.join(tmpd, "podcast.mp3")
+            gen_audio_tmp(text_for_tts, out_fp, provider="azure", voice=azure_voice)
+
+            with open(out_fp, "rb") as f:
+                mp3_bytes = f.read()
 
         resp = Response(mp3_bytes, mimetype="audio/mpeg")
         resp.headers["Content-Disposition"] = 'attachment; filename="podcast.mp3"'
         return resp
+
     except Exception as e:
+        print("Error occurred while generating podcast:", e)
         return jsonify({"error": "pipeline-failed", "detail": str(e)}), 500
+
+@bp.post("/api/podcast/speak")
+def podcast_speak():
+    """
+    Prefer Azure OpenAI TTS (plain text). Accept either:
+      - {"text": "...", "voice": "alloy"}
+      - {"ssml": "..."}  # will be downgraded to text by stripping tags (best-effort)
+    """
+    data = request.get_json(force=True, silent=True) or {}
+    text = (data.get("text") or "").strip()
+    ssml = (data.get("ssml") or "").strip()
+    azure_voice = data.get("voice") or os.getenv("AZURE_TTS_VOICE", "alloy")
+
+    if not text and not ssml:
+        return jsonify({"error": "Provide 'text' or 'ssml'"}), 400
+
+    # If only SSML provided, do a best-effort strip to text (keeps content but loses voice/pitch)
+    if not text and ssml:
+        import re
+        text = re.sub(r"<[^>]+>", " ", ssml)        # strip tags
+        text = " ".join(text.split()).strip()
+
+    try:
+        from ..services.generate_audio import generate_audio as gen_audio_tmp
+        import tempfile, io
+
+        with tempfile.TemporaryDirectory() as tmpd:
+            out_fp = os.path.join(tmpd, "podcast.mp3")
+            gen_audio_tmp(text, out_fp, provider="azure", voice=azure_voice)
+
+            with open(out_fp, "rb") as f:
+                mp3_bytes = f.read()
+
+        resp = Response(mp3_bytes, mimetype="audio/mpeg")
+        resp.headers["Content-Disposition"] = 'attachment; filename="podcast.mp3"'
+        return resp
+
+    except Exception as e:
+        return jsonify({"error": "tts-failed", "detail": str(e)}), 500
