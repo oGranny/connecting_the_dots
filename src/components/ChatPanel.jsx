@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState, useCallback, useLayoutEffect } from "react";
-import { Send } from "lucide-react";
+import { Send, Play, Pause, Download, Headphones } from "lucide-react";
 import { cls } from "../lib/utils";
 import { API_BASE } from "../services/api";
 
@@ -13,6 +13,26 @@ async function ragQuery(q, top_k = 10) {
   });
   if (!r.ok) throw new Error(`RAG ${r.status}`);
   return r.json();
+}
+
+async function podcastPreview(payload) {
+  const r = await fetch(`${API_BASE}/api/podcast/from-selection`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`Podcast preview ${r.status}`);
+  return r.json();
+}
+
+async function podcastSpeak(payload) {
+  const r = await fetch(`${API_BASE}/api/podcast/from-selection/audio`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!r.ok) throw new Error(`Podcast audio ${r.status}`);
+  return r.blob(); // audio/mpeg or wav (fallback)
 }
 
 function niceName(pdf_name = "") {
@@ -50,14 +70,130 @@ function bucketize(selection, contexts = []) {
   return buckets;
 }
 
-/* ---------- UI pieces ---------- */
+function formatTime(sec) {
+  if (!isFinite(sec) || sec < 0) return "0:00";
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${m}:${s.toString().padStart(2, "0")}`;
+}
+
+function AudioPlayer({ src, onDownload }) {
+  const audioRef = useRef(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [seeking, setSeeking] = useState(false);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onLoaded = () => setDuration(a.duration || 0);
+    const onTime = () => { if (!seeking) setCurrent(a.currentTime || 0); };
+    const onEnd = () => setPlaying(false);
+
+    a.addEventListener("loadedmetadata", onLoaded);
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("ended", onEnd);
+    return () => {
+      a.removeEventListener("loadedmetadata", onLoaded);
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("ended", onEnd);
+    };
+  }, [seeking]);
+
+  // Autoplay when a new src arrives
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a || !src) return;
+    setPlaying(true);
+    a.play().catch(() => setPlaying(false));
+  }, [src]);
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (playing) { a.pause(); setPlaying(false); }
+    else { a.play().then(() => setPlaying(true)).catch(() => {}); }
+  };
+
+  const pct = duration ? Math.min(100, Math.max(0, (current / duration) * 100)) : 0;
+
+  return (
+    <div className="w-full rounded-xl bg-white/5 p-3">
+      {/* hidden native audio element */}
+      <audio ref={audioRef} src={src ?? undefined} preload="metadata" />
+
+      <div className="flex items-center gap-3">
+        <button
+          onClick={toggle}
+          disabled={!src}
+          className={cls(
+            "shrink-0 inline-flex items-center justify-center h-9 w-9 rounded-full",
+            "bg-white/90 hover:bg-white text-neutral-900",
+            !src && "opacity-60 cursor-not-allowed"
+          )}
+          aria-label={playing ? "Pause" : "Play"}
+        >
+          {playing ? <Pause size={18} /> : <Play size={18} />}
+        </button>
+
+        {/* scrubber */}
+        <div className="flex-1">
+          <input
+            type="range"
+            min="0"
+            max={duration || 0}
+            step="0.1"
+            value={seeking ? undefined : current}
+            onChange={(e) => {
+              setSeeking(true);
+              setCurrent(Number(e.target.value));
+            }}
+            onMouseUp={(e) => {
+              const a = audioRef.current;
+              const t = Number(e.target.value);
+              if (a) a.currentTime = t;
+              setSeeking(false);
+            }}
+            onTouchEnd={(e) => {
+              const a = audioRef.current;
+              const t = Number(e.target.value);
+              if (a) a.currentTime = t;
+              setSeeking(false);
+            }}
+            className="w-full appearance-none bg-transparent"
+            style={{
+              background: `linear-gradient(to right, rgba(255,255,255,.7) ${pct}%, rgba(255,255,255,.12) ${pct}%)`,
+              height: 4,
+              borderRadius: 9999,
+              outline: "none",
+            }}
+          />
+          <div className="mt-1 flex justify-between text-[11px] text-slate-400">
+            <span>{formatTime(current)}</span>
+            <span>{formatTime(duration)}</span>
+          </div>
+        </div>
+
+        <button
+          onClick={onDownload}
+          disabled={!src}
+          className={cls(
+            "shrink-0 px-2 py-1.5 rounded-lg bg-white/10 hover:bg-white/20 text-slate-100 text-xs border border-white/20",
+            !src && "opacity-60 cursor-not-allowed"
+          )}
+        >
+          <Download size={14} />
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- shared UI bits ---------- */
 
 function Pill({ children }) {
-  return (
-    <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-200 border border-white/20">
-      {children}
-    </span>
-  );
+  return <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/10 text-slate-200 border border-white/20">{children}</span>;
 }
 
 function CtxRow({ ctx, activeFile }) {
@@ -68,9 +204,7 @@ function CtxRow({ ctx, activeFile }) {
 
   const go = () => {
     if (!canJump) return;
-    window.dispatchEvent(
-      new CustomEvent("viewer:goto", { detail: { page: ctx.page, docId: activeFile.id } })
-    );
+    window.dispatchEvent(new CustomEvent("viewer:goto", { detail: { page: ctx.page, docId: activeFile.id } }));
   };
 
   return (
@@ -108,7 +242,7 @@ function BucketBlock({ title, items, activeFile }) {
       <div className="mb-1 text-xs font-semibold text-slate-200">{title}</div>
       <div className="space-y-2">
         {items.map((c, i) => (
-          <CtxRow key={`${c.chunk_id}-${i}`} ctx={c} activeFile={activeFile} />
+          <CtxRow key={`${c.chunk_id || c.page}-${i}`} ctx={c} activeFile={activeFile} />
         ))}
       </div>
     </div>
@@ -117,12 +251,10 @@ function BucketBlock({ title, items, activeFile }) {
 
 function InsightsCard({ selection, answer, buckets, activeFile }) {
   return (
-    <div className="rounded-xl px-3 py-2 bg-white/10 text-slate-100 border border-white/20">
+    <div className="text-slate-100">
       <div className="flex items-center gap-2 text-xs text-slate-300">
         <Pill>Insights</Pill>
-        <span className="truncate">
-          for "{selection?.slice(0, 120)}{selection?.length > 120 ? "…" : ""}"
-        </span>
+        <span className="truncate">for "{selection?.slice(0, 120)}{selection?.length > 120 ? "…" : ""}"</span>
       </div>
 
       {answer && (
@@ -183,24 +315,12 @@ function TopTabs({ tab, setTab }) {
   };
 
   return (
-    <div className="sticky top-0 z-10 bg-black/30 backdrop-blur supports-[backdrop-filter]:bg-black/20">
+    <div className="sticky top-0 z-10 bg-transparent border-b border-white/10">
       <div className="px-3 pt-2">
-        <div
-          ref={wrapRef}
-          role="tablist"
-          aria-label="Panels"
-          className="relative"
-          onKeyDown={onKeyDown}
-        >
-          {/* baseline */}
+        <div ref={wrapRef} role="tablist" aria-label="Panels" className="relative" onKeyDown={onKeyDown}>
           <div aria-hidden className="absolute left-0 right-0 bottom-0 h-px bg-white/10" />
-          {/* active indicator */}
-          <div
-            aria-hidden
-            className="absolute bottom-0 h-0.5 bg-slate-300 rounded-full transition-all duration-300 ease-out"
-            style={{ left: indicator.left, width: indicator.width }}
-          />
-          {/* buttons */}
+          <div aria-hidden className="absolute bottom-0 h-0.5 bg-slate-300 rounded-full transition-all duration-300 ease-out"
+               style={{ left: indicator.left, width: indicator.width }} />
           <div className="flex gap-1">
             {tabs.map((t) => {
               const active = tab === t.id;
@@ -228,18 +348,172 @@ function TopTabs({ tab, setTab }) {
   );
 }
 
+/* ---------- Podcast UI ---------- */
+
+function TurnLine({ t }) {
+  const color = t.speaker === "A" ? "bg-white/5" : "bg-neutral-800";
+  return (
+    <div className={cls("rounded-xl px-3 py-2 text-sm border", color, "border-white/15")}>
+      <span className="font-semibold text-slate-200 mr-2">{t.speaker}:</span>
+      <span className="text-slate-100">{t.text}</span>
+    </div>
+  );
+}
+
+function SourceList({ contexts, activeFile }) {
+  if (!contexts?.length) return null;
+  return (
+    <div className="mt-4">
+      <div className="text-xs font-semibold text-slate-200 mb-1">References & Context</div>
+      <div className="space-y-2">
+        {contexts.map((c, i) => <CtxRow key={`ctx-${i}`} ctx={c} activeFile={activeFile} />)}
+      </div>
+    </div>
+  );
+}
+
+function PodcastPanel({ activeFile, lastSelection }) {
+  const [selection, setSelection] = useState(lastSelection || "");
+  const [isWorking, setIsWorking] = useState(false);
+  const [error, setError] = useState(null);
+
+  const [audioUrl, setAudioUrl] = useState(null);
+  const [contexts, setContexts] = useState([]);
+  const audioRef = useRef(null);
+
+  // keep selection in sync with the viewer (same as Insights)
+  useEffect(() => {
+    function handleAnchor(e) {
+      const t = (e.detail?.text || "").trim();
+      if (t) setSelection(t);
+    }
+    window.addEventListener("doc-anchor", handleAnchor);
+    return () => window.removeEventListener("doc-anchor", handleAnchor);
+  }, []);
+  useEffect(() => { if (lastSelection) setSelection(lastSelection); }, [lastSelection]);
+
+  // cleanup blob url
+  useEffect(() => () => { if (audioUrl) URL.revokeObjectURL(audioUrl); }, [audioUrl]);
+
+  async function podcastPreview(payload) {
+    const r = await fetch(`${API_BASE}/api/podcast/from-selection`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`Podcast preview ${r.status}`);
+    return r.json();
+  }
+  async function podcastSpeak(payload) {
+    const r = await fetch(`${API_BASE}/api/podcast/from-selection/audio`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!r.ok) throw new Error(`Podcast audio ${r.status}`);
+    return r.blob();
+  }
+
+  async function generate() {
+    const sel = (selection || "").trim();
+    if (!sel) {
+      setError("Select text in the PDF first (same as Insights).");
+      return;
+    }
+    setError(null);
+    setIsWorking(true);
+    setContexts([]);
+    if (audioUrl) URL.revokeObjectURL(audioUrl);
+    setAudioUrl(null);
+
+    // fixed params: 3 minutes, Top-K 7, default voices (not sent)
+    const payload = { selection: sel, top_k: 7, minutes: 3 };
+
+    try {
+      // fetch contexts to show references
+      const preview = await podcastPreview(payload);
+      setContexts(preview.contexts || []);
+
+      // synthesize + autoplay
+      const blob = await podcastSpeak(payload);
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+      setTimeout(() => audioRef.current?.play?.(), 60);
+    } catch (e) {
+      setError(e?.message || String(e));
+    } finally {
+      setIsWorking(false);
+    }
+  }
+
+  const download = () => {
+    if (!audioUrl) return;
+    const a = document.createElement("a");
+    a.href = audioUrl;
+    a.download = "podcast.mp3";
+    a.click();
+  };
+
+  return (
+    <div className="rounded-xl px-4 py-8 bg-white/10 text-slate-100 border border-white/20">
+      {/* centered hero */}
+      <div className="flex flex-col items-center text-center">
+        <div className="rounded-2xl p-5 bg-white/5 border border-white/20">
+          <Headphones size={64} />
+        </div>
+
+        <div className="mt-3 text-sm text-slate-300">
+          Turn your current selection into a 2-voice episode
+        </div>
+        {/* <div className="text-xs text-slate-400">
+          Defaults: <b>3 min</b> • <b>Top-K 7</b> • server voices
+        </div> */}
+
+        <button
+          onClick={generate}
+          disabled={isWorking}
+          className={cls(
+            "mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-white/90 hover:bg-white text-neutral-900 text-sm",
+            isWorking && "opacity-60 cursor-not-allowed"
+          )}
+        >
+          <Play size={16} />
+          {isWorking ? "Working…" : "Generate Podcast"}
+        </button>
+
+        {error && <div className="text-xs text-red-300 mt-2">{error}</div>}
+      </div>
+
+      {/* player */}
+      <div className="mt-4">
+        <AudioPlayer src={audioUrl} onDownload={download} />
+      </div>
+
+
+      {/* References & Context */}
+      {contexts?.length ? (
+        <div className="mt-6">
+          <div className="text-xs font-semibold text-slate-200 mb-1">References & Context</div>
+          <div className="space-y-2">
+            {contexts.map((c, i) => (
+              <CtxRow key={`ctx-${i}`} ctx={c} activeFile={activeFile} />
+            ))}
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 /* ---------- main ---------- */
 
 export default function ChatPanel({ activeFile }) {
   const [messages, setMessages] = useState([
-    {
-      role: "assistant",
-      content:
-        "Hi! I'm your doc AI. Select text in the PDF to see overlapping, contradictory, examples, and more.",
-    },
+    { role: "assistant", content: "Hi! I'm your doc AI. Select text in the PDF to see overlapping, contradictory, examples, and more." },
   ]);
   const [input, setInput] = useState("");
-  const [tab, setTab] = useState("insights");
+  const [tab, setTab] = useState("insights"); // "insights" | "podcast" | "chat"
+  const [lastSelection, setLastSelection] = useState("");
+
   const viewRef = useRef(null);
 
   // drag-to-scroll
@@ -282,12 +556,14 @@ export default function ChatPanel({ activeFile }) {
     }
   }, [messages, tab]);
 
-  // listen to "doc-anchor" events
+  // listen to viewer selections -> "doc-anchor" events
   useEffect(() => {
     async function handleAnchor(e) {
       const { text } = e.detail || {};
       const sel = (text || "").trim();
       if (!sel) return;
+
+      setLastSelection(sel);
 
       setMessages((m) => [
         ...m,
@@ -299,13 +575,9 @@ export default function ChatPanel({ activeFile }) {
         const buckets = bucketize(sel, res.contexts || []);
         setMessages((m) => [
           ...m,
-          {
-            role: "assistant_insights",
-            selection: sel,
-            answer: res.answer,
-            buckets,
-          },
+          { role: "assistant_insights", selection: sel, answer: res.answer, buckets },
         ]);
+        // setTab("podcast"); // enable if you want auto-jump
       } catch (err) {
         setMessages((m) => [
           ...m,
@@ -317,7 +589,7 @@ export default function ChatPanel({ activeFile }) {
     return () => window.removeEventListener("doc-anchor", handleAnchor);
   }, []);
 
-  // send free-typed questions
+  // free-typed questions
   const send = useCallback(async (text) => {
     const t = text.trim();
     if (!t) return;
@@ -330,7 +602,6 @@ export default function ChatPanel({ activeFile }) {
         ...m,
         { role: "assistant_insights", selection: t, answer: res.answer, buckets },
       ]);
-      // setTab("insights");
     } catch (err) {
       setMessages((m) => [
         ...m,
@@ -342,15 +613,13 @@ export default function ChatPanel({ activeFile }) {
   const visible = messages.filter((m) => {
     if (tab === "insights") return m.role === "assistant_insights";
     if (tab === "chat") return m.role !== "assistant_insights";
-    return false; // podcast doesn't use messages
+    return false; // podcast uses its own panel
   });
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      {/* Underline tabs */}
       <TopTabs tab={tab} setTab={setTab} />
 
-      {/* body */}
       <div
         ref={viewRef}
         className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3 cursor-grab no-scrollbar"
@@ -363,12 +632,7 @@ export default function ChatPanel({ activeFile }) {
         aria-labelledby={`${tab}-tab`}
       >
         {tab === "podcast" ? (
-          <div className="rounded-xl px-4 py-6 bg-white/10 text-slate-100 border border-white/20">
-            <div className="text-sm text-slate-300 mb-2">Podcast</div>
-            <div className="text-sm">
-              Build short audio episodes from selected text or across PDFs.
-            </div>
-          </div>
+          <PodcastPanel activeFile={activeFile} lastSelection={lastSelection} />
         ) : tab === "insights" ? (
           visible.length ? (
             visible.map((m, i) => (
@@ -402,7 +666,6 @@ export default function ChatPanel({ activeFile }) {
         )}
       </div>
 
-      {/* footer — only for Chat */}
       {tab === "chat" && (
         <div className="p-3 border-t border-white/10">
           <div className="flex items-center gap-2">

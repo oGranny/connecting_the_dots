@@ -4,7 +4,7 @@ import useDragResize from "./hooks/useDragResize";
 import CenterViewer from "./components/viewer/CenterViewer";
 import Sidebar from "./components/Sidebar";
 import Tabs from "./components/Tabs";
-import ChatPanel from "./components/ChatPanel";
+import ChatPanel from "./components/rightpanel";
 import { API_BASE, uploadToBackend as uploadFile, detectHeadings as detect } from "./services/api";
 import StatusBar from "./components/StatusBar";
 import "./components/viewer/scrollbar.css";
@@ -18,10 +18,7 @@ export default function App() {
   const left = useDragResize({ initial: 260, min: 200, max: 420 });
   const right = useDragResize({ initial: 260, min: 280, max: 560, invert: true });
 
-  // Pane visibility state
-  const [leftVisible, setLeftVisible] = useState(true);
-  const [rightVisible, setRightVisible] = useState(true);
-
+  const [resizing, setResizing] = useState(false);
   const [files, setFiles] = useState([]);                 // {id, name, url, file, serverId, size}
   const [activeId, setActiveId] = useState(null);
 
@@ -38,6 +35,29 @@ export default function App() {
   const [viewerStatus, setViewerStatus] = useState({});   // { page, fit? }
 
   /* ---------- Backend health ping (TOP-LEVEL EFFECT) ---------- */
+
+  // end resizing on global mouse/touch release
+  useEffect(() => {
+    const end = () => setResizing(false);
+    window.addEventListener("mouseup", end);
+    window.addEventListener("touchend", end);
+    return () => {
+      window.removeEventListener("mouseup", end);
+      window.removeEventListener("touchend", end);
+    };
+  }, []);
+
+  const startLeftResize = (e) => {
+    e.preventDefault();
+    setResizing(true);
+    left.startDrag(e);
+  };
+  const startRightResize = (e) => {
+    e.preventDefault();
+    setResizing(true);
+    right.startDrag(e);
+  };
+
   useEffect(() => {
     let mounted = true;
     const url = `${(API_BASE || "").replace(/\/+$/, "")}/api/health`;
@@ -213,7 +233,10 @@ export default function App() {
   );
 
   return (
-    <div className="fixed inset-0 w-full h-full flex flex-col overflow-hidden bg-black text-slate-100">
+    <div
+      className={`fixed inset-0 w-full h-full flex flex-col overflow-hidden bg-black text-slate-100 ${resizing ? "select-none" : ""}`}
+      onSelectStart={resizing ? (e) => e.preventDefault() : undefined}
+    >
       {/* top bar */}
       {/* <div className="flex items-center gap-3 px-4 py-2 border-b border-slate-800/80 bg-black/70">
         <div className="mx-auto text-sm font-medium">Document Workspace</div>
@@ -271,11 +294,9 @@ export default function App() {
         )}
 
         {/* left handle */}
-        {leftVisible && (
-          <div onMouseDown={left.startDrag} title="Drag to resize" className="w-2 border-r-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
-            <div className="w-1 h-10 rounded bg-slate-700" />
-          </div>
-        )}
+        <div onMouseDown={startLeftResize} onTouchStart={startLeftResize} title="Drag to resize" className="w-2 border-r-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
+          <div className="w-1 h-10 rounded bg-slate-700" />
+        </div>
 
         {/* center viewer */}
         <div ref={dropRef} className="flex-1 min-w-0 flex flex-col overflow-hidden">
@@ -297,7 +318,7 @@ export default function App() {
         </div>
 
         {/* right handle */}
-        <div onMouseDown={right.startDrag} title="Drag to resize" className="w-2 border-l-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
+        <div onMouseDown={startRightResize} onTouchStart={startRightResize} title="Drag to resize" className="w-2 border-l-[1px] border-zinc-800 cursor-col-resize grid place-items-center">
           <div className="w-1 h-10 rounded bg-slate-700" />
         </div>
 
