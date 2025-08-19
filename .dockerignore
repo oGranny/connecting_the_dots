@@ -1,0 +1,55 @@
+# deps & builds
+node_modules
+build
+coverage
+.pnpm-store
+.pnp
+.pnp.*
+.cache
+
+# VCS / editors
+.git
+.gitignore
+.github
+.vscode
+.idea
+
+# env / secrets (keep examples)
+.env
+.env.*
+!.env.example
+
+# logs
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+*.log
+**/*.log
+
+# macOS cruft / AppleDouble (fixes xattr/._ errors)
+.DS_Store
+**/.DS_Store
+.AppleDouble
+**/.AppleDouble
+.LSOverride
+**/.LSOverride
+._*
+**/._*
+.Spotlight-V100
+.Trashes
+
+# Python virtual envs & cache (you have myvenv/myenv)
+**/__pycache__/
+**/*.py[cod]
+**/.venv/
+**/venv/
+**/env/
+**/myvenv/
+**/myenv/
+
+# big local data not needed in the image
+**/uploads/
+**/rag_index/
+
+# misc
+*.swp
