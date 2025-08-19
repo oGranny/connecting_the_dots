@@ -12,7 +12,6 @@ import {
   ZoomOut,
   RotateCcw,
   Pencil,
-  Eraser,
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -47,8 +46,6 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
 
   // Tools
   const [tool, setTool] = useState("select"); // "select" | "hand" | "draw" | "highlight"
-  const [penColor, setPenColor] = useState("#ef4444"); // default red
-  const PEN_COLORS = ["#ef4444", "#22c55e", "#eab308", "#3b82f6", "#a855f7"]; // red, green, yellow, blue, purple
   const isDraw = tool === "draw";
 
   // Per-page data
@@ -170,34 +167,14 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     setCurrPage(p);
   };
 
-  // --- Erasing ---
-  const _strokeHit = (s, pt, r) => {
-    const r2 = r * r;
-    const P = s?.pts || [];
-    for (let i = 0; i < P.length; i++) {
-      const dx = (P[i].x - pt.x);
-      const dy = (P[i].y - pt.y);
-      if (dx * dx + dy * dy <= r2) return true;
-    }
-    return false;
-  };
-  const eraseAt = (page, pt, r) => {
-    setStrokesByPage((prev) => {
-      const arr = prev[page] ? [...prev[page]] : [];
-      const keep = arr.filter((s) => !_strokeHit(s, pt, r));
-      return { ...prev, [page]: keep };
-    });
-  };
-
   // Allow ChatPanel to command page jumps in the CURRENT open PDF
   useEffect(() => {
     function onGoto(e) {
       const { page, docId } = e.detail || {};
       if (!page) return;
       if (docId && activeFile?.id && docId !== activeFile.id) return; // ignore if targeting another doc
-      const p = clamp(parseInt(page, 10) || 1, 1, numPages || 1);
-      if (viewMode === "continuous") scrollToPage(p);
-      else setCurrPage(p);
+      if (viewMode === "continuous") scrollToPage(clamp(parseInt(page, 10) || 1, 1, numPages || 1));
+      else setCurrPage(clamp(parseInt(page, 10) || 1, 1, numPages || 1));
     }
     window.addEventListener("viewer:goto", onGoto);
     return () => window.removeEventListener("viewer:goto", onGoto);
@@ -250,27 +227,8 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
               active={tool === "draw"}
               onClick={() => setTool(tool === "draw" ? "select" : "draw")}
               icon={<Pencil size={16} />}
-              hint="Draw"
+              label="Draw"
             />
-            <SegButton
-              active={tool === "erase"}
-              onClick={() => setTool(tool === "erase" ? "select" : "erase")}
-              icon={<Eraser size={16} />}
-              hint="Erase"
-            />
-            {tool === "draw" && (
-              <div className="flex items-center gap-2 pl-2 pr-3">
-                {PEN_COLORS.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setPenColor(c)}
-                    title={c}
-                    className={`h-5 w-5 rounded-full border border-white/20 focus:outline-none focus:ring-2 focus:ring-white/30 ${penColor === c ? "ring-2 ring-white/70" : ""}`}
-                    style={{ backgroundColor: c }}
-                  />
-                ))}
-              </div>
-            )}
           </Segment>
 
           <Segment title="Zoom">
@@ -315,16 +273,8 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
       <div
         ref={scrollRef}
         className={`relative flex-1 min-h-0 overflow-auto ${
-          tool === "hand" ? "cursor-grab select-none" : (tool === "draw" || tool === "erase") ? "cursor-crosshair select-none" : "cursor-default"
+          tool === "hand" ? "cursor-grab select-none" : tool === "draw" ? "cursor-crosshair select-none" : "cursor-default"
         } touch-none overscroll-contain themed-scroll`}
-        style={{
-          cursor:
-            tool === "draw"
-              ? "url('/pen-cursor.png') 4 24, crosshair"
-              : tool === "erase"
-              ? "url('/eraser-cursor.png') 10 10, crosshair"
-              : undefined,
-        }}
       >
         {fileSpec ? (
           <Document
@@ -348,11 +298,9 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
                       pageWidth={pageWidth}
                       onFirstPageLoad={p === 1 ? onFirstPageLoad : undefined}
                       tool={tool}
-                      penColor={penColor}
                       dpr={dpr}
                       strokes={strokesByPage[p] || []}
                       onAddStroke={(s) => addStroke(p, s)}
-                      onEraseAt={(pt, r) => eraseAt(p, pt, r)}
                       highlights={highlightsByPage[p] || []}
                       onAddHighlight={(rects) => addHighlightRects(p, rects)}
                       onAnchor={(payload) => {
