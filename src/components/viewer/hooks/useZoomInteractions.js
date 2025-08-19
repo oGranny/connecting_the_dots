@@ -1,156 +1,85 @@
 // src/components/viewer/hooks/useZoomInteractions.js
 import { useEffect } from "react";
-import { clamp } from "../utils/geometry";
 
-export default function useZoomInteractions(scrollRef, setZoom, opts = {}) {
-  const min = opts.min ?? 0.25;
-  const max = opts.max ?? 4;
-  const sensitivity = opts.sensitivity ?? 0.0025;
+function clamp(value, min, max) {
+  return Math.min(Math.max(value, min), max);
+}
 
-  // ---- Ctrl+Wheel (incl. pinch on Chrome/Edge desktop)
+export default function useZoomInteractions(elementRef, setZoom, options = {}) {
+  const { min = 0.25, max = 4, sensitivity = 0.002 } = options;
+
   useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
+    const el = elementRef.current;
+    if (!el) {
+      console.log("No element reference found for zoom interactions");
+      return;
+    }
 
+    console.log("Setting up zoom interactions on element:", el.className);
+
+    // Simple Ctrl+Wheel zoom handler
     const onWheel = (e) => {
-      // Only zoom when Ctrl is pressed. Chrome/Edge set ctrlKey=true for trackpad pinch.
-      if (!e.ctrlKey) return;
-      e.preventDefault();
-
-      const delta = -e.deltaY; // up=in, down=out
-      const scale = Math.exp(delta * sensitivity);
-
-      const rect = el.getBoundingClientRect();
-      const offsetX = e.clientX - rect.left;
-      const offsetY = e.clientY - rect.top;
-
-      setZoom((z) => {
-        const newZ = clamp(z * scale, min, max);
-        const s = newZ / z;
-
-        // keep pointer position stable during zoom
-        el.scrollLeft = (el.scrollLeft + offsetX) * s - offsetX;
-        el.scrollTop  = (el.scrollTop  + offsetY) * s - offsetY;
-
-        return newZ;
-      });
-    };
-
-    // passive:false is required to call preventDefault on wheel
-    el.addEventListener("wheel", onWheel, { passive: false });
-    return () => el.removeEventListener("wheel", onWheel);
-  }, [scrollRef, min, max, sensitivity, setZoom]);
-
-  // ---- Touch pinch (mobile/tablet) using two-finger distance
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    let pinch = null;
-    const dist = (a, b) => Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-
-    const onTouchStart = (e) => {
-      if (e.touches.length === 2) {
-        const [a, b] = e.touches;
-        pinch = {
-          last: dist(a, b),
-          cx: (a.clientX + b.clientX) / 2,
-          cy: (a.clientY + b.clientY) / 2,
-        };
-      }
-    };
-
-    const onTouchMove = (e) => {
-      if (e.touches.length === 2 && pinch) {
-        // prevent page from scrolling/zooming
+      // Log every wheel event to see what we get
+      if (e.ctrlKey) {
+        console.log("Ctrl+Wheel detected:", { 
+          deltaY: e.deltaY, 
+          target: e.target?.tagName,
+          targetClass: e.target?.className,
+          currentTarget: e.currentTarget?.className
+        });
+        
+        // Prevent browser zoom immediately
         e.preventDefault();
-
-        const [a, b] = e.touches;
-        const d = dist(a, b);
-        if (!d || !pinch.last) return;
-
-        const scale = d / pinch.last;
-        pinch.last = d;
-
-        const rect = el.getBoundingClientRect();
-        const offsetX = pinch.cx - rect.left;
-        const offsetY = pinch.cy - rect.top;
-
-        setZoom((z) => {
-          const newZ = clamp(z * scale, min, max);
-          const s = newZ / z;
-          el.scrollLeft = (el.scrollLeft + offsetX) * s - offsetX;
-          el.scrollTop  = (el.scrollTop  + offsetY) * s - offsetY;
-          return newZ;
+        e.stopPropagation();
+        
+        const delta = -e.deltaY;
+        const scale = 1 + (delta * sensitivity);
+        
+        console.log("Applying zoom:", { delta, scale });
+        
+        setZoom((currentZoom) => {
+          const newZoom = clamp(currentZoom * scale, min, max);
+          console.log("Zoom updated:", currentZoom, "->", newZoom);
+          return newZoom;
         });
       }
     };
 
-    const onTouchEnd = () => { pinch = null; };
+    // Also add a global listener to catch all events
+    const onGlobalWheel = (e) => {
+      if (e.ctrlKey) {
+        console.log("Global Ctrl+Wheel detected, target:", e.target?.tagName, e.target?.className);
+        
+        // Check if we're inside the PDF viewer
+        const pdfViewer = e.target?.closest?.('.pdf-viewer');
+        if (pdfViewer) {
+          console.log("Inside PDF viewer, handling zoom");
+          e.preventDefault();
+          e.stopPropagation();
+          
+          const delta = -e.deltaY;
+          const scale = 1 + (delta * sensitivity);
+          
+          setZoom((currentZoom) => {
+            const newZoom = clamp(currentZoom * scale, min, max);
+            console.log("Global zoom updated:", currentZoom, "->", newZoom);
+            return newZoom;
+          });
+        }
+      }
+    };
 
-    el.addEventListener("touchstart", onTouchStart, { passive: true });
-    el.addEventListener("touchmove", onTouchMove, { passive: false });
-    el.addEventListener("touchend", onTouchEnd);
-    el.addEventListener("touchcancel", onTouchEnd);
+    // Add listeners to both the element and document
+    el.addEventListener("wheel", onWheel, { passive: false });
+    document.addEventListener("wheel", onGlobalWheel, { passive: false });
 
+    console.log("Zoom event listeners added to element and document");
+
+    // Cleanup
     return () => {
-      el.removeEventListener("touchstart", onTouchStart);
-      el.removeEventListener("touchmove", onTouchMove);
-      el.removeEventListener("touchend", onTouchEnd);
-      el.removeEventListener("touchcancel", onTouchEnd);
+      el.removeEventListener("wheel", onWheel);
+      document.removeEventListener("wheel", onGlobalWheel);
+      console.log("Zoom event listeners removed");
     };
-  }, [scrollRef, min, max, setZoom]);
-
-  // ---- Safari: gesturestart/gesturechange (pinch) support
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-
-    let lastScale = 1;
-    let center = null;
-
-    const onGestureStart = (e) => {
-      // Block Safari's default page zoom
-      e.preventDefault();
-      lastScale = e.scale || 1;
-
-      const rect = el.getBoundingClientRect();
-      const cx = (e.clientX ?? rect.left + rect.width / 2);
-      const cy = (e.clientY ?? rect.top + rect.height / 2);
-      center = { x: cx, y: cy };
-    };
-    const onGestureChange = (e) => {
-      e.preventDefault();
-      const scale = (e.scale || 1) / (lastScale || 1);
-      lastScale = e.scale || 1;
-
-      const rect = el.getBoundingClientRect();
-      const offsetX = (center?.x ?? rect.left + rect.width / 2) - rect.left;
-      const offsetY = (center?.y ?? rect.top + rect.height / 2) - rect.top;
-
-      setZoom((z) => {
-        const newZ = clamp(z * scale, min, max);
-        const s = newZ / z;
-        el.scrollLeft = (el.scrollLeft + offsetX) * s - offsetX;
-        el.scrollTop  = (el.scrollTop  + offsetY) * s - offsetY;
-        return newZ;
-      });
-    };
-    const onGestureEnd = (e) => {
-      e.preventDefault();
-      lastScale = 1;
-      center = null;
-    };
-
-    // Only Safari fires these; other browsers ignore them harmlessly.
-    el.addEventListener("gesturestart", onGestureStart, { passive: false });
-    el.addEventListener("gesturechange", onGestureChange, { passive: false });
-    el.addEventListener("gestureend", onGestureEnd, { passive: false });
-
-    return () => {
-      el.removeEventListener("gesturestart", onGestureStart);
-      el.removeEventListener("gesturechange", onGestureChange);
-      el.removeEventListener("gestureend", onGestureEnd);
-    };
-  }, [scrollRef, min, max, setZoom]);
+  }, [elementRef, setZoom, min, max, sensitivity]);
 }

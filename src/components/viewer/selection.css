@@ -27,3 +27,21 @@
 
 /* Optional: disable link hitboxes during selection to avoid jumps */
 .react-pdf__Page .annotationLayer { pointer-events: none; }
+
+/* Add to your viewer CSS file or component */
+.context-highlight {
+  transition: background-color 0.3s ease;
+}
+
+.context-highlight.scrolled-to {
+  animation: highlightPulse 2s ease-in-out;
+}
+
+@keyframes highlightPulse {
+  0%, 100% { 
+    background-color: rgba(59, 130, 246, 0.3); 
+  }
+  50% { 
+    background-color: rgba(59, 130, 246, 0.6); 
+  }
+}

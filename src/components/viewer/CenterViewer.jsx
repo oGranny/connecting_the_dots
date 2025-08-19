@@ -12,6 +12,7 @@ import {
   ZoomOut,
   RotateCcw,
   Pencil,
+  Eraser, // Add Eraser import
 } from "lucide-react";
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -28,7 +29,7 @@ import useBlockBrowserCtrlZoom from "./hooks/useBlockBrowserCtrlZoom";
 const v = pdfjs.version;
 pdfjs.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${v}/build/pdf.worker.min.mjs`;
 
-export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }) {
+export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor, zoom, setZoom }) {
   const scrollRef = useRef(null);
 
   // Viewer state
@@ -36,7 +37,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   const [currPage, setCurrPage] = useState(1);
   const [viewMode, setViewMode] = useState("continuous"); // "continuous" | "single"
   const [fitMode, setFitMode] = useState("width");        // "width" | "page"
-  const [zoom, setZoom] = useState(1);
+  // const [zoom, setZoom] = useState(1); // Remove local zoom state - it's now passed as props
   const [docError, setDocError] = useState(null);
 
   // Geometry
@@ -44,9 +45,11 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   const [pageAspect, setPageAspect] = useState(0.75);
   const dpr = Math.max(1, typeof window !== "undefined" ? window.devicePixelRatio : 1);
 
-  // Tools
-  const [tool, setTool] = useState("select"); // "select" | "hand" | "draw" | "highlight"
+  // Tools - Update to include eraser
+  const [tool, setTool] = useState("select"); // "select" | "hand" | "draw" | "highlight" | "eraser"
+  const [drawColor, setDrawColor] = useState("#3B82F6"); // Default blue color
   const isDraw = tool === "draw";
+  const isEraser = tool === "eraser";
 
   // Per-page data
   const [highlightsByPage, setHighlightsByPage] = useState({});
@@ -74,7 +77,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     setCurrPage(1);
     setHighlightsByPage({});
     setStrokesByPage({});
-    setZoom(1);
+    // setZoom(1); // REMOVE THIS LINE
     setDocError(null);
     pageRefs.current = {}; // Clear page refs when changing documents
   }, [activeFile?.id]);
@@ -92,7 +95,10 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   }, []);
 
   // When changing fit/view, reset zoom so change is obvious
-  useEffect(() => setZoom(1), [fitMode, viewMode]);
+  useEffect(() => {
+    // Only reset zoom if it's the first time or user wants to reset
+    // setZoom(1); // REMOVE THIS LINE or make it conditional
+  }, [fitMode, viewMode]);
 
   // Fit targets
   const targetBaseWidth = useMemo(() => {
@@ -180,6 +186,147 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
     return () => window.removeEventListener("viewer:goto", onGoto);
   }, [viewMode, numPages, activeFile?.id]);
 
+  // Search and highlight
+  useEffect(() => {
+    const handleHighlightRange = (event) => {
+      const { page, start, end, text, highlightColor } = event.detail || {};
+      
+      // Validate we have the required data
+      if (!page || (start === undefined && end === undefined && !text)) {
+        console.log('Invalid highlight data:', event.detail);
+        return;
+      }
+      
+      console.log(`Highlighting range on page ${page}: ${start}-${end}`, text?.substring(0, 50));
+      
+      // Clear previous highlights
+      document.querySelectorAll('.context-highlight').forEach(el => {
+        const parent = el.parentNode;
+        if (parent) {
+          parent.replaceChild(document.createTextNode(el.textContent), el);
+          parent.normalize();
+        }
+      });
+      
+      // Find the specific page element
+      const pageElement = pageRefs.current?.[page];
+      if (!pageElement) {
+        console.log(`Page ${page} not found in refs`);
+        return;
+      }
+      
+      // Look for text layer within this specific page
+      const textLayer = pageElement.querySelector('.react-pdf__Page__textContent');
+      if (!textLayer) {
+        console.log(`Text layer not found for page ${page}`);
+        return;
+      }
+      
+      // Get all text spans in the page
+      const textSpans = textLayer.querySelectorAll('span');
+      if (!textSpans.length) {
+        console.log(`No text spans found on page ${page}`);
+        return;
+      }
+      
+      // If we have start/end positions, use character-based highlighting
+      if (start !== undefined && end !== undefined) {
+        let currentPos = 0;
+        let highlightStarted = false;
+        const spansToHighlight = [];
+        
+        for (const span of textSpans) {
+          const spanText = span.textContent || '';
+          const spanStart = currentPos;
+          const spanEnd = currentPos + spanText.length;
+          
+          // Check if this span overlaps with our highlight range
+          if (spanEnd > start && spanStart < end) {
+            spansToHighlight.push({
+              span,
+              highlightStart: Math.max(0, start - spanStart),
+              highlightEnd: Math.min(spanText.length, end - spanStart)
+            });
+          }
+          
+          currentPos = spanEnd;
+          
+          // Stop if we've passed the end position
+          if (currentPos > end) break;
+        }
+        
+        // Apply highlights to the identified spans
+        spansToHighlight.forEach(({ span, highlightStart, highlightEnd }, index) => {
+          const spanText = span.textContent;
+          
+          if (highlightStart === 0 && highlightEnd === spanText.length) {
+            // Highlight the entire span
+            span.style.backgroundColor = highlightColor;
+            span.style.borderRadius = '2px';
+            span.classList.add('context-highlight');
+          } else {
+            // Partial span highlighting - need to split the text
+            const beforeText = spanText.substring(0, highlightStart);
+            const highlightText = spanText.substring(highlightStart, highlightEnd);
+            const afterText = spanText.substring(highlightEnd);
+            
+            // Clear the original span
+            span.textContent = '';
+            
+            // Add text parts
+            if (beforeText) {
+              span.appendChild(document.createTextNode(beforeText));
+            }
+            
+            if (highlightText) {
+              const highlightSpan = document.createElement('span');
+              highlightSpan.textContent = highlightText;
+              highlightSpan.style.backgroundColor = highlightColor;
+              highlightSpan.style.borderRadius = '2px';
+              highlightSpan.classList.add('context-highlight');
+              span.appendChild(highlightSpan);
+            }
+            
+            if (afterText) {
+              span.appendChild(document.createTextNode(afterText));
+            }
+          }
+          
+          // Scroll to the first highlighted span
+          if (index === 0) {
+            span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        });
+        
+        console.log(`Highlighted ${spansToHighlight.length} spans`);
+        
+      } else if (text) {
+        // Fallback to text-based search if no start/end positions
+        const searchText = text.toLowerCase().trim();
+        let found = false;
+        
+        for (const span of textSpans) {
+          const spanText = (span.textContent || '').toLowerCase().trim();
+          if (spanText.includes(searchText) || searchText.includes(spanText)) {
+            span.style.backgroundColor = highlightColor;
+            span.style.borderRadius = '2px';
+            span.classList.add('context-highlight');
+            
+            if (!found) {
+              span.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              found = true;
+            }
+          }
+        }
+        
+        console.log(`Text-based highlighting: ${found ? 'found' : 'not found'}`);
+      }
+    };
+    
+    window.addEventListener("viewer:highlight-range", handleHighlightRange);
+    return () => window.removeEventListener("viewer:highlight-range", handleHighlightRange);
+  }, []);
+
   // Mutators
   const addHighlightRects = (page, rects) => {
     if (!rects?.length) return;
@@ -206,6 +353,42 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
   };
   const clearStrokes = () => setStrokesByPage((prev) => ({ ...prev, [currPage]: [] }));
 
+  // TEMPORARY TEST - Add this right after your other useEffects
+  useEffect(() => {
+    console.log("Setting up DIRECT zoom test");
+    
+    const testWheelHandler = (e) => {
+      console.log("DIRECT wheel event:", {
+        ctrlKey: e.ctrlKey,
+        deltaY: e.deltaY,
+        target: e.target?.tagName,
+        targetClass: e.target?.className
+      });
+      
+      if (e.ctrlKey) {
+        console.log("DIRECT: Ctrl+wheel detected!");
+        e.preventDefault();
+        
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        setZoom(prevZoom => {
+          const newZoom = Math.max(0.25, Math.min(4, prevZoom + delta));
+          console.log("DIRECT zoom change:", prevZoom, "->", newZoom);
+          return newZoom;
+        });
+      }
+    };
+    
+    // Add to document to catch everything
+    document.addEventListener("wheel", testWheelHandler, { passive: false });
+    
+    return () => {
+      document.removeEventListener("wheel", testWheelHandler);
+    };
+  }, [setZoom]); // Add setZoom to dependencies
+
+  // Comment out the zoom interactions hook temporarily
+  // useZoomInteractions(scrollRef, setZoom);
+  
   if (!activeFile) {
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center bg-neutral-950 text-slate-300">
@@ -229,7 +412,54 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
               icon={<Pencil size={16} />}
               label="Draw"
             />
+            {/* Eraser button - only visible when draw is active */}
+            {isDraw && (
+              <SegButton
+                active={tool === "eraser"}
+                onClick={() => setTool(tool === "eraser" ? "draw" : "eraser")}
+                icon={<Eraser size={16} />}
+                label="Eraser"
+              />
+            )}
           </Segment>
+
+          {/* Color picker when draw is selected */}
+          {tool === "draw" && (
+            <Segment title="Color">
+              <div className="flex items-center gap-2">
+                <input
+                  type="color"
+                  value={drawColor}
+                  onChange={(e) => setDrawColor(e.target.value)}
+                  className="w-8 h-8 rounded-lg border border-white/20 bg-transparent cursor-pointer"
+                  title="Drawing color"
+                />
+                <div className="flex gap-1">
+                  {/* Preset colors */}
+                  {[
+                    "#3B82F6", // Blue
+                    "#EF4444", // Red
+                    "#10B981", // Green
+                    "#F59E0B", // Yellow
+                    "#8B5CF6", // Purple
+                    "#F97316", // Orange
+                    "#EC4899", // Pink
+                    "#000000", // Black
+                  ].map((color) => (
+                    <button
+                      key={color}
+                      onClick={() => setDrawColor(color)}
+                      className={`w-6 h-6 rounded border-2 ${
+                        drawColor === color ? "border-white" : "border-white/20"
+                      }`}
+                      style={{ backgroundColor: color }}
+                      title={`Use ${color}`}
+                    />
+                  ))}
+                </div>
+              </div>
+            </Segment>
+          )}
 
           <Segment title="Zoom">
             <IconButton onClick={zoomOut} title="Zoom out"><ZoomOut size={16} /></IconButton>
@@ -238,7 +468,7 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
             <IconButton onClick={resetZoom} title="Reset zoom"><RotateCcw size={16} /></IconButton>
           </Segment>
 
-          <div className="ml-1">
+          {/* <div className="ml-1">
             <select
               value={fitMode}
               onChange={(e) => setFitMode(e.target.value)}
@@ -248,10 +478,10 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
               <option value="width">Fit width</option>
               <option value="page">Fit page</option>
             </select>
-          </div>
+          </div> */}
 
           <div className="ml-auto flex items-center gap-2">
-            {tool === "draw" && (
+            {(tool === "draw" || tool === "eraser") && (
               <>
                 <button onClick={undoStroke} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm" title="Undo (current page)">Undo</button>
                 <button onClick={clearStrokes} className="h-9 px-3 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 text-slate-200 text-sm" title="Clear drawings (current page)">Clear</button>
@@ -273,7 +503,10 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
       <div
         ref={scrollRef}
         className={`relative flex-1 min-h-0 overflow-auto ${
-          tool === "hand" ? "cursor-grab select-none" : tool === "draw" ? "cursor-crosshair select-none" : "cursor-default"
+          tool === "hand" ? "cursor-grab select-none" : 
+          tool === "draw" ? "cursor-crosshair select-none" : 
+          tool === "eraser" ? "cursor-pointer select-none" :
+          "cursor-default"
         } touch-none overscroll-contain themed-scroll`}
       >
         {fileSpec ? (
@@ -298,9 +531,11 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
                       pageWidth={pageWidth}
                       onFirstPageLoad={p === 1 ? onFirstPageLoad : undefined}
                       tool={tool}
+                      drawColor={drawColor}
                       dpr={dpr}
                       strokes={strokesByPage[p] || []}
                       onAddStroke={(s) => addStroke(p, s)}
+                      onEraseStrokes={(strokeIndices) => eraseStrokes(p, strokeIndices)} // Add erase callback
                       highlights={highlightsByPage[p] || []}
                       onAddHighlight={(rects) => addHighlightRects(p, rects)}
                       onAnchor={(payload) => {
@@ -354,6 +589,17 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor }
       </div>
     </div>
   );
+
+  // Add the erase function
+  function eraseStrokes(page, strokeIndices) {
+    setStrokesByPage((prev) => {
+      const pageStrokes = prev[page] || [];
+      const filteredStrokes = pageStrokes.filter((stroke, index) => !strokeIndices.includes(index));
+      return { ...prev, [page]: filteredStrokes };
+    });
+  }
+
+  // ...rest of your existing code...
 }
 
 /* ---------- Loading/Error ---------- */

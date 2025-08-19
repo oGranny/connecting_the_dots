@@ -1,9 +1,9 @@
 import React, { useState } from "react";
-import { ChevronDown, ChevronRight, FileText, Loader2, Search } from "lucide-react";
+import { ChevronDown, ChevronRight, FileText, Loader2, Search, File } from "lucide-react";
 import { cls } from "../lib/utils";
 
-export default function Sidebar({ headings = [], status, onJumpToHeading, onFilter }) {
-  const [open, setOpen] = useState({ toc: true });
+export default function Sidebar({ headings = [], status, onJumpToHeading, onFilter, files = [], activeFileId, onFileSelect }) {
+  const [open, setOpen] = useState({ toc: true, files: true });
 
   const Section = ({ id, title, children }) => (
     <div className="mb-4 select-none">
@@ -69,6 +69,33 @@ export default function Sidebar({ headings = [], status, onJumpToHeading, onFilt
           </span>
             <span className="text-xs truncate">H{h.level} · {h.title}</span>
             {/* <span className="ml-auto text-[10px] text-slate-400">p.{h.page}</span> */}
+          </div>
+        ))}
+      </Section>
+
+      <Section id="files" title="Files">
+        {(!files || files.length === 0) && (
+          <div className="text-xs text-slate-400">No files loaded.</div>
+        )}
+
+        {files?.map((file) => (
+          <div
+            key={file.id}
+            onClick={() => onFileSelect?.(file.id)}
+            className={cls(
+              "px-2 py-1 rounded-md cursor-pointer flex items-center gap-2",
+              activeFileId === file.id ? "bg-slate-700/70" : "bg-slate-800/30",
+              "hover:bg-slate-700/50"
+            )}
+            title={`Switch to ${file.name}`}
+          >
+            <span className="inline-flex items-center justify-center w-4 h-4 mr-2 flex-none leading-none">
+              <File className="w-3.5 h-3.5 text-slate-300" strokeWidth={1.8} aria-hidden="true" />
+            </span>
+            <span className="text-xs truncate">{file.name}</span>
+            {activeFileId === file.id && (
+              <span className="ml-auto text-[10px] text-emerald-400"></span>
+            )}
           </div>
         ))}
       </Section>

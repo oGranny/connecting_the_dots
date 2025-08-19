@@ -719,5 +719,72 @@ def podcast():
     )
     return jsonify({"topic": topic, "length": length, "script": script, "audio_url": None})
 
+@app.delete("/api/files/<file_id>")
+def delete_file(file_id):
+    """Delete a file and clean up RAG index"""
+    try:
+        file_path = os.path.join(UPLOAD_DIR, file_id)
+        
+        if not os.path.exists(file_path):
+            return jsonify({"error": "File not found"}), 404
+        
+        # Get absolute path for RAG cleanup
+        abs_path = os.path.abspath(file_path)
+        
+        # Clean up RAG index entries for this file
+        with rag.lock:
+            removed_chunks = 0
+            
+            # Remove from files registry
+            if abs_path in rag.files_reg:
+                del rag.files_reg[abs_path]
+                rag._save_registry()
+            
+            # Remove chunks from RAG index
+            if rag.metas:
+                # Find indices of chunks belonging to this file
+                indices_to_remove = []
+                for i, meta in enumerate(rag.metas):
+                    if meta.get("pdf_path") == abs_path:
+                        indices_to_remove.append(i)
+                
+                removed_chunks = len(indices_to_remove)
+                
+                # Remove in reverse order to maintain indices
+                for i in reversed(indices_to_remove):
+                    rag.metas.pop(i)
+                    if rag.V is not None and i < rag.V.shape[0]:
+                        rag.V = np.delete(rag.V, i, axis=0)
+                
+                # Save updated index if we removed anything
+                if indices_to_remove:
+                    # Rewrite metadata file
+                    with open(META_PATH, "w", encoding="utf-8") as f:
+                        for meta in rag.metas:
+                            f.write(json.dumps(meta, ensure_ascii=False) + "\n")
+                    
+                    # Save updated vectors if they exist
+                    if rag.V is not None and rag.V.shape[0] > 0:
+                        np.save(VEC_PATH, rag.V)
+                    elif rag.V is not None and rag.V.shape[0] == 0:
+                        # If no vectors left, remove the vector file
+                        if os.path.exists(VEC_PATH):
+                            os.remove(VEC_PATH)
+                        rag.V = None
+                    
+                    rag.last_updated = time.time()
+        
+        # Remove the physical file
+        os.remove(file_path)
+        
+        return jsonify({
+            "success": True, 
+            "message": f"File {file_id} deleted",
+            "removed_chunks": removed_chunks
+        })
+        
+    except Exception as e:
+        return jsonify({"error": "Failed to delete file", "detail": str(e)}), 500
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=PORT, debug=True)

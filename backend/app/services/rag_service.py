@@ -136,8 +136,12 @@ def make_prompt(query: str, contexts: List[Dict[str, Any]]) -> str:
         parts.append(f"[{c['rank']}] {c['pdf_name']} p.{c['page']} ({c['start']}-{c['end']}):\n{t}")
     ctx = "\n\n".join(parts)
     head = (
-        "Answer strictly from the provided PDF excerpts.\n"
-        "If the answer is not present, say you don't know.\n"
+        "Generate insights related to the selected text from the provided PDF excerpts.\n"
+        "Focus on finding overlapping content, contradictory viewpoints, examples, definitions, and related concepts.\n"
+        "Provide contextual insights that enrich understanding of the selected text.\n"
+        "Ground all results strictly in the documents provided - do not add external knowledge.\n"
+        "If no relevant insights can be found in the excerpts, say you don't have enough information.\n"
+        "avoid using 'Based on the provided PDF excerpts' in the answer."
     )
     return f"{head}\n\nQUESTION:\n{query}\n\nCONTEXTS:\n{ctx}\n\nAnswer:"
 

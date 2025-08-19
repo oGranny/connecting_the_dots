@@ -1,31 +1,97 @@
 import React, { useEffect, useMemo, useRef, useState, useCallback } from "react";
-import { uuid, sleep } from "./lib/utils";
+import { uuid, sleep, cls } from "./lib/utils";
+import { niceName } from "./components/rightpanel/lib/helpers";
 import useDragResize from "./hooks/useDragResize";
 import CenterViewer from "./components/viewer/CenterViewer";
 import Sidebar from "./components/Sidebar";
 import Tabs from "./components/Tabs";
 import ChatPanel from "./components/rightpanel";
-import { API_BASE, uploadToBackend as uploadFile, detectHeadings as detect } from "./services/api";
 import StatusBar from "./components/StatusBar";
+import { API_BASE, uploadToBackend as uploadFile, detectHeadings as detect, deleteFromBackend } from "./services/api";
+
 import "./components/viewer/scrollbar.css";
 import "./components/viewer/selection.css";
 
-/* =========================
-  Config now in services/api.js (API_BASE)
-========================= */
-
 export default function App() {
   const left = useDragResize({ initial: 260, min: 200, max: 420 });
-  const right = useDragResize({ initial: 260, min: 280, max: 560, invert: true });
+  const right = useDragResize({ initial: 300, min: 280, max: 560, invert: true });
 
   const [resizing, setResizing] = useState(false);
-  const [files, setFiles] = useState([]);                 // {id, name, url, file, serverId, size}
+  
+  // Initialize files from localStorage
+  const [files, setFiles] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_files');
+      return saved ? JSON.parse(saved) : [];
+    } catch {
+      return [];
+    }
+  });
+  
+  // Initialize activeId - will be set after files are loaded
   const [activeId, setActiveId] = useState(null);
 
-  // headings per LOCAL file id: { [fileId]: Array<{id, level, title, page, hidden?}> }
-  const [headingsByFile, setHeadingsByFile] = useState({});
-  // analysis status per LOCAL file id: 'pending' | 'done' | 'error'
-  const [analyzing, setAnalyzing] = useState({});
+  // Add global zoom state
+  const [globalZoom, setGlobalZoom] = useState(() => {
+    // Optionally restore zoom from localStorage
+    const saved = localStorage.getItem("pdf-zoom");
+    return saved ? parseFloat(saved) : 1;
+  });
+
+  // Save zoom to localStorage when it changes
+  useEffect(() => {
+    localStorage.setItem("pdf-zoom", globalZoom.toString());
+  }, [globalZoom]);
+
+  const [headingsByFile, setHeadingsByFile] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_headingsByFile');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+  
+  const [analyzing, setAnalyzing] = useState(() => {
+    try {
+      const saved = localStorage.getItem('app_analyzing');
+      return saved ? JSON.parse(saved) : {};
+    } catch {
+      return {};
+    }
+  });
+
+  // Restore activeId after files are loaded (only on initial mount)
+  useEffect(() => {
+    if (files.length === 0) return;
+    
+    try {
+      const savedActiveId = localStorage.getItem('app_activeId');
+      if (savedActiveId && files.some(f => f.id === savedActiveId)) {
+        // Saved activeId exists and matches a file
+        setActiveId(savedActiveId);
+      } else {
+        // No saved activeId or it doesn't match any file, use first file
+        setActiveId(files[0].id);
+      }
+    } catch {
+      // Fallback to first file
+      setActiveId(files[0].id);
+    }
+  }, []); // Run only once on mount
+
+  // Handle case when files change but we need to maintain or update activeId
+  useEffect(() => {
+    if (files.length === 0) {
+      setActiveId(null);
+      return;
+    }
+
+    // If no active file or current active file doesn't exist, select first file
+    if (!activeId || !files.some(f => f.id === activeId)) {
+      setActiveId(files[0].id);
+    }
+  }, [files.length]); // Only when number of files changes
 
   // viewer API to jump when clicking headings
   const viewerApiRef = useRef({ gotoPage: () => {}, search: () => {} });
@@ -89,7 +155,7 @@ export default function App() {
   }, []);
 
   /* ---------- Backend calls (stable) ---------- */
-  const uploadToBackend = useCallback(async (file) => uploadFile(file), []);
+  const uploadToBackendStable = useCallback(async (file) => uploadFile(file), []);
 
   const detectHeadingsForFile = useCallback(async (localFile) => {
     if (!localFile?.serverId) {
@@ -126,7 +192,7 @@ export default function App() {
       const items = await Promise.all(
         fileList.map(async (f) => {
           try {
-            const meta = await uploadToBackend(f);
+            const meta = await uploadToBackendStable(f);
             return {
               id: uuid(),
               name: f.name,
@@ -158,26 +224,73 @@ export default function App() {
       // auto-run heading detection for each uploaded file
       for (const it of items) detectHeadingsForFile(it);
     },
-    [uploadToBackend, detectHeadingsForFile, activeId]
+    [uploadToBackendStable, detectHeadingsForFile, activeId]
   );
 
-  function closeTab(id) {
+  // Save to localStorage whenever state changes
+  useEffect(() => {
+    localStorage.setItem('app_files', JSON.stringify(files));
+  }, [files]);
+
+  useEffect(() => {
+    if (activeId) {
+      localStorage.setItem('app_activeId', activeId);
+    } else {
+      localStorage.removeItem('app_activeId');
+    }
+  }, [activeId]);
+
+  useEffect(() => {
+    localStorage.setItem('app_headingsByFile', JSON.stringify(headingsByFile));
+  }, [headingsByFile]);
+
+  useEffect(() => {
+    localStorage.setItem('app_analyzing', JSON.stringify(analyzing));
+  }, [analyzing]);
+
+  // Clean up localStorage when a tab is closed
+  const closeTab = useCallback(async (id) => {
+    const fileToClose = files.find(f => f.id === id);
+    
+    // Show loading state if desired
+    if (fileToClose?.serverId) {
+      setAnalyzing(prev => ({ ...prev, [id]: "deleting" }));
+    }
+    
+    // Clean up backend file if it exists
+    if (fileToClose?.serverId) {
+      const result = await deleteFromBackend(fileToClose.serverId);
+      if (result?.removed_chunks > 0) {
+        console.log(`Removed ${result.removed_chunks} chunks from RAG index`);
+      }
+    }
+    
+    // Clean up object URL if it was created locally
+    if (fileToClose?.url?.startsWith('blob:')) {
+      URL.revokeObjectURL(fileToClose.url);
+    }
+    
     setFiles((prev) => {
-      const closing = prev.find((p) => p.id === id);
-      if (closing && closing.url?.startsWith("blob:")) URL.revokeObjectURL(closing.url);
-      const next = prev.filter((p) => p.id !== id);
+      const next = prev.filter((f) => f.id !== id);
+      if (id === activeId) {
+        setActiveId(next.length > 0 ? next[0].id : null);
+      }
       return next;
     });
+    
+    // Clean up associated data
     setHeadingsByFile((prev) => {
-      const { [id]: _, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[id];
+      return next;
     });
+    
     setAnalyzing((prev) => {
-      const { [id]: _, ...rest } = prev;
-      return rest;
+      const next = { ...prev };
+      delete next[id];
+      return next;
     });
-    setActiveId((curr) => (curr === id ? null : curr));
-  }
+  }, [files, activeId]);
 
   const activeFile = useMemo(() => files.find((f) => f.id === activeId), [files, activeId]);
   const activeHeadings = headingsByFile[activeId] || [];
@@ -232,6 +345,52 @@ export default function App() {
     [activeId]
   );
 
+  // Handle PDF switching and navigation
+  useEffect(() => {
+    function handleSwitchAndGoto(e) {
+      const { fileName, page } = e.detail || {};
+      if (!fileName || !page) return;
+
+      // Find the file that matches this filename
+      const targetFile = files.find(f => {
+        // Try multiple matching strategies
+        if (f.name === fileName) return true;
+        if (fileName.endsWith(f.name)) return true;
+        if (f.name.endsWith(fileName)) return true;
+        
+        // Try with niceName
+        const nice1 = niceName(fileName);
+        const nice2 = niceName(f.name);
+        if (nice1 === nice2) return true;
+        if (nice1 === f.name) return true;
+        if (nice2 === fileName) return true;
+        
+        return false;
+      });
+
+      if (targetFile) {
+        console.log(`Switching to file: ${targetFile.name}, page: ${page}`);
+        
+        // Switch to the target file
+        setActiveId(targetFile.id);
+        
+        // Wait a bit for the viewer to load, then jump to page
+        setTimeout(() => {
+          window.dispatchEvent(
+            new CustomEvent("viewer:goto", { 
+              detail: { page, docId: targetFile.id } 
+            })
+          );
+        }, 300); // Increased timeout for better reliability
+      } else {
+        console.warn(`Could not find PDF file: ${fileName}`, 'Available files:', files.map(f => f.name));
+      }
+    }
+
+    window.addEventListener("switch-and-goto", handleSwitchAndGoto);
+    return () => window.removeEventListener("switch-and-goto", handleSwitchAndGoto);
+  }, [files]);
+
   return (
     <div
       className={`fixed inset-0 w-full h-full flex flex-col overflow-hidden bg-black text-slate-100 ${resizing ? "select-none" : ""}`}
@@ -252,6 +411,9 @@ export default function App() {
               status={activeStatus}
               onJumpToHeading={(page) => viewerApiRef.current?.gotoPage?.(page)}
               onFilter={handleFilter}
+              files={files}
+              activeFileId={activeId}
+              onFileSelect={(arg) => {console.log('File select triggered, activeId:', arg); setActiveId(arg)}}
             />
           </div>
         </div>
@@ -273,6 +435,8 @@ export default function App() {
           />
           <CenterViewer
             activeFile={activeFile}
+            zoom={globalZoom}        // Pass zoom as prop
+            setZoom={setGlobalZoom}  // Pass setZoom as prop
             onReady={(api) => {
               viewerApiRef.current = api || {};
             }}
@@ -287,7 +451,7 @@ export default function App() {
 
         {/* right chat */}
         <div style={{ width: right.width }} className="h-full min-h-0 border-l border-slate-800 bg-slate-900/60 flex flex-col">
-          <ChatPanel activeFile={activeFile} />
+          <ChatPanel activeFile={activeFile} onFileSelect={setActiveId} files={files} />
         </div>
       </div>
 

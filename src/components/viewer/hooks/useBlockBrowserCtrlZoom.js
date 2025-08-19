@@ -1,46 +1,59 @@
 import { useEffect } from "react";
 
-export default function useBlockBrowserCtrlZoom(scrollRef) {
+function inside(e) {
+  const target = e.target;
+  return target && target.closest && !!target.closest(".pdf-viewer");
+}
+
+export default function useBlockBrowserCtrlZoom(elementRef) {
   useEffect(() => {
-    const el = scrollRef?.current;
+    const el = elementRef.current;
+    if (!el) return;
 
-    const inside = (ev) => {
-      if (!el) return false;
-      const path = ev.composedPath?.();
-      return path ? path.includes(el) : el.contains(ev.target);
-    };
+    console.log("Setting up browser zoom blocking on element:", el);
 
-    // Block Ctrl+Wheel (desktop) before the browser handles it
+    // TEMPORARILY DISABLED - let's see if this is interfering
+    return;
+
+    // Block Ctrl+Wheel - but let it through if it's on our PDF viewer
     const onWheelCapture = (e) => {
-      if (e.ctrlKey && inside(e)) e.preventDefault();
+      if (e.ctrlKey) {
+        if (inside(e)) {
+          // Don't block - let our custom zoom handle it
+          console.log("Allowing custom zoom handling");
+          return;
+        } else {
+          // Block browser zoom outside our viewer
+          console.log("Blocking browser wheel zoom outside viewer");
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }
     };
 
-    // Block Ctrl/⌘ + (+ / - / 0) keyboard zoom when focus is in/over viewer
+    // Block Ctrl/⌘ + (+/-/0) keyboard shortcuts
     const onKeyDownCapture = (e) => {
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
       if (["+", "=", "-", "_", "0"].includes(k) || e.code.startsWith("Numpad")) {
-        if (inside(e) || document.activeElement === document.body) e.preventDefault();
+        if (inside(e) || document.activeElement === document.body) {
+          console.log("Blocking browser keyboard zoom:", k);
+          e.preventDefault();
+          e.stopPropagation();
+        }
       }
     };
 
-    // Safari pinch gestures
-    const onGestureStart = (e) => { if (inside(e)) e.preventDefault(); };
-    const onGestureChange = (e) => { if (inside(e)) e.preventDefault(); };
-    const onGestureEnd = (e) => { if (inside(e)) e.preventDefault(); };
+    // Add event listeners at the document level with capture: true
+    document.addEventListener("wheel", onWheelCapture, { capture: true, passive: false });
+    document.addEventListener("keydown", onKeyDownCapture, { capture: true, passive: false });
 
-    window.addEventListener("wheel", onWheelCapture, { passive: false, capture: true });
-    window.addEventListener("keydown", onKeyDownCapture, { passive: false, capture: true });
-    window.addEventListener("gesturestart", onGestureStart, { passive: false, capture: true });
-    window.addEventListener("gesturechange", onGestureChange, { passive: false, capture: true });
-    window.addEventListener("gestureend", onGestureEnd, { passive: false, capture: true });
+    console.log("Browser zoom blocking event listeners added");
 
     return () => {
-      window.removeEventListener("wheel", onWheelCapture, { capture: true });
-      window.removeEventListener("keydown", onKeyDownCapture, { capture: true });
-      window.removeEventListener("gesturestart", onGestureStart, { capture: true });
-      window.removeEventListener("gesturechange", onGestureChange, { capture: true });
-      window.removeEventListener("gestureend", onGestureEnd, { capture: true });
+      document.removeEventListener("wheel", onWheelCapture, { capture: true });
+      document.removeEventListener("keydown", onKeyDownCapture, { capture: true });
+      console.log("Browser zoom blocking event listeners removed");
     };
-  }, [scrollRef]);
+  }, [elementRef]);
 }

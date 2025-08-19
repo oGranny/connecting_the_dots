@@ -55,3 +55,25 @@ export async function detectHeadings(serverId) {
 
   return { ok: false };
 }
+
+export async function deleteFromBackend(serverId) {
+  if (!serverId) return; // No server ID means file wasn't uploaded to backend
+  
+  try {
+    const response = await fetch(`${API_BASE}/api/files/${serverId}`, {
+      method: "DELETE",
+    });
+    
+    if (!response.ok) {
+      console.warn(`Failed to delete file ${serverId} from backend:`, response.statusText);
+      return { success: false, error: response.statusText };
+    }
+    
+    const result = await response.json();
+    console.log(`Successfully deleted file ${serverId}, removed ${result.removed_chunks} chunks from RAG index`);
+    return result;
+  } catch (error) {
+    console.warn(`Error deleting file ${serverId} from backend:`, error);
+    return { success: false, error: error.message };
+  }
+}
