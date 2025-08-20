@@ -1,35 +1,53 @@
 # Connecting the Dots
+[![React](https://img.shields.io/badge/React-18+-61DAFB?style=flat-square&logo=react&logoColor=white)](https://reactjs.org/) [![Python](https://img.shields.io/badge/Python-3.10+-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org/) [![Flask](https://img.shields.io/badge/Flask-2.3+-000000?style=flat-square&logo=flask&logoColor=white)](https://flask.palletsprojects.com/) [![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?style=flat-square&logo=docker&logoColor=white)](https://docker.com/)
 
-PDF exploration platform that combines advanced document analysis, AI-powered insights, and interactive features. Upload PDFs, navigate through smart table of contents, ask AI questions using RAG (Retrieval-Augmented Generation), and generate podcasts from selected text—all in one seamless interface.
+## 🚀 Revolutionary PDF Analysis Platform
+
+**Transform how you interact with documents** using cutting-edge AI technology. This platform combines advanced document analysis, AI-powered insights, and interactive features to deliver an unparalleled PDF exploration experience. Upload PDFs, navigate through intelligent table of contents, ask AI questions using RAG (Retrieval-Augmented Generation), and generate podcasts from selected text—all in one powerful, seamless interface.
+
+> 🔥 **Built for the future of document intelligence** - leveraging state-of-the-art AI to unlock hidden insights in your PDFs.
 
 ## 🎬 Demo
 
-Check out our demo: [Demo Video](https://drive.google.com/drive/folders/1wBwBbH747e5jldWefSUI5zQsqZ6hRqGB?usp=sharing)
+[![Demo Video](https://img.shields.io/badge/▶️_Watch_Demo-blue?style=for-the-badge)](https://drive.google.com/drive/folders/1wBwBbH747e5jldWefSUI5zQsqZ6hRqGB?usp=sharing)
 
-## ✨ Key Features
-- 🔍 Smart PDF Viewer: Pan, zoom, rotate, annotate with drawing tools
-- 🤖 AI-Powered Chat: Ask questions about your documents using advanced RAG
-- 🎧 Podcast Generation: Convert selected text into conversational audio
-- 📚 Intelligent TOC: Auto-generated table of contents using YOLO-based layout detection
-- 💡 Context-Aware Insights: Get smart analysis of highlighted content
-- 📁 Multi-Document Management: Switch between multiple uploaded PDFs seamlessly
-- 🎨 Rich Annotations: Draw, highlight, and markup documents with customizable tools
+> 🎥 **[Click here to watch our demo video](https://drive.google.com/drive/folders/1wBwBbH747e5jldWefSUI5zQsqZ6hRqGB?usp=sharing)** showcasing all the key features in action.
 
-## 🛠 Tech Stack
+## ⚡ Game-Changing Features
+
+- 🔍 **Smart PDF Viewer**: Pan, zoom, rotate, annotate with professional drawing tools
+- 🤖 **AI-Powered Chat**: Ask complex questions about your documents using advanced RAG
+- 🎧 **Podcast Generation**: Convert selected text into engaging conversational audio
+- 📚 **Intelligent TOC**: Auto-generated table of contents using YOLO-based layout detection
+- 💡 **Context-Aware Insights**: Get intelligent analysis of highlighted content
+- 📁 **Multi-Document Management**: Switch between multiple uploaded PDFs seamlessly
+- 🎨 **Rich Annotations**: Draw, highlight, and markup documents with customizable tools
+
+## 🛠 Cutting-Edge Tech Stack
 
 ### Frontend
-- React 18+ (Create React App)
-- Tailwind CSS for styling
-- Lucide React for icons
-- react-pdf & pdfjs-dist for PDF rendering
+- **React 18+** (Create React App)
+- **Tailwind CSS** for modern styling
+- **Lucide React** for icons
+- **react-pdf & pdfjs-dist** for PDF rendering
 
 ### Backend
-- Flask (Python 3.10+)
-- RAG Implementation with vector embeddings
-- Azure OpenAI Text-to-Speech for podcast generation
-- Custom YOLO for document layout detection
-- OpenAI/LLM integration for AI features
-- Custom pipeline using hybrid rag and slm-llm to generate accurate response.
+- **Flask** (Python 3.10+)
+- **Advanced RAG Implementation** with vector embeddings
+- **Azure OpenAI Text-to-Speech** for podcast generation
+- **Custom YOLO** for document layout detection
+- **OpenAI/LLM integration** for AI features
+- **Custom hybrid RAG + SLM-LLM pipeline** for accurate responses
+
+## 🔄 Intelligent Workflow
+
+- **📤 Upload PDF** → File is stored in the backend, indexed into the RAG database, and a small language model (SLM) extracts Top-K relevant sections.  
+- **🎯 Anchor Text** → When a user selects text in the PDF, a RAG query fetches Top-K matching contexts, which are passed to the LLM (RAG) to generate an answer.  
+- **🎙️ Generate Podcast** → On podcast click, the Top-K contexts are fed into an LLM with a podcast prompt, and the script is converted into audio using Azure OpenAI TTS.  
+- **💬 Chat** → User queries trigger a RAG search; if confidence ≥ threshold, the answer comes from the RAG LLM; otherwise, a precomputed summary of all PDFs is given to a general LLM for a fallback response.  
+
+### 🏗️ Architecture
+![Architecture Diagram](https://drive.google.com/uc?id=16pOxHoDP6niXLiSet7E0f9mq78-ow3Dy)
 
 ## 📁 Project Structure
 
@@ -80,24 +98,26 @@ connecting_the_dots/
 │   └── robots.txt
 │
 └── src/
-    ├── components/
-    │   ├── Toolbar.jsx
-    │   ├── Tabs.jsx
-    │   ├── ChatPanel.jsx
-    │   └── viewer/
-    │       ├── PDFPage.jsx
-    │       ├── CenterViewer.jsx
-    │       ├── selection.css
-    │       └── scrollbar.css
-    ├── services/
-    │   └── api.js
-    ├── App.jsx
-    └── index.js
+  ├── components/
+  │   ├── Toolbar.jsx
+  │   ├── Tabs.jsx
+  │   ├── ChatPanel.jsx
+  │   └── viewer/
+  │       ├── PDFPage.jsx
+  │       ├── CenterViewer.jsx
+  │       ├── selection.css
+  │       └── scrollbar.css
+  ├── services/
+  │   └── api.js
+  ├── App.jsx
+  └── index.js
 ```
 
 ## 🚀 Quick Start
 
-### Option 1 — Docker (recommended)
+> **⚠️ CRITICAL:** Port `4000` (backend API) must be exposed when running the Docker image. The frontend runs on `8080`. Make sure both ports are mapped.
+
+### Option 1 — Docker
 
 **Build**
 ```bash
@@ -109,87 +129,48 @@ docker build --platform linux/amd64 -t connectin-the-dots .
 docker run -e LLM_PROVIDER=gemini -e GEMINI_MODEL=gemini-2.5 -e TTS_PROVIDER=azure -e GOOGLE_API_KEY=<GOOGLE_API_KEY> -e AZURE_TTS_KEY=<AZURE_TTS_KEY> -e AZURE_TTS_ENDPOINT=<AZURE_TTS_ENDPOINT> -p 8080:8080 -p 4000:4000 connecting_the_dots
 ```
 
-#### Run (with env & credentials)
+#### Manual Setup (Development)
 
-If your backend needs cloud creds (e.g., Google service account) or API keys, create a host folder and mount it read-only:
-
+If your backend needs cloud credentials or API keys, create environment variables or use .env in `backend` folder:
 ```bash
-# make a host folder for creds
-mkdir -p "$HOME/credentials"
+cd backend/
+python -m venv .venv
+source ./.venv/bin/activate
 
-# copy your JSON key into it (adjust the source path)
-cp ~/Downloads/adbe-gcp.json "$HOME/credentials/"
-
-docker run --rm --platform linux/amd64 \
-  -v "$HOME/credentials:/credentials:ro" \
-  -e GOOGLE_APPLICATION_CREDENTIALS=/credentials/adbe-gcp.json \
-  -e ADOBE_EMBED_API_KEY=your_adobe_key \
-  -e LLM_PROVIDER=gemini \
-  -e GEMINI_MODEL=gemini-2.5-flash \
-  -e TTS_PROVIDER=azure \
-  -e AZURE_TTS_KEY=your_azure_key \
-  -e AZURE_TTS_ENDPOINT=https://example.azure.com/tts \
-  -p 8080:8080 connecting-the-dots:prod
-
-#docker compose(optional)
-docker-compose up -d
-docker-compose logs -f
-docker-compose down
-```
-🧑‍💻 Option 2 — Local Development
-
-Backend
-```bash
-cd backend
-
-# create & activate venv
-python -m venv myvenv
-source myvenv/bin/activate        # Windows: myvenv\Scripts\activate
-
-# install dependencies
 pip install -r requirements.txt
 
-# create .env
-cat > .env <<'EOF'
-FLASK_ENV=development
-PORT=4000
-
-LLM_PROVIDER=gemini
-GEMINI_MODEL=gemini-2.5-flash
-GOOGLE_APPLICATION_CREDENTIALS=/absolute/path/to/adbe-gcp.json
-
-ADOBE_EMBED_API_KEY=replace_me(Optional)
-
-TTS_PROVIDER=azure
-AZURE_TTS_KEY=replace_me
-AZURE_TTS_ENDPOINT=https://example.azure.com/tts
-EOF
-
-# run the API
 python run.py
-```
-Health check:
-```bash
-curl http://localhost:4000/api/health
-```
-Frontend
-```bash
-# from repo root
+
+# Open a new terminal in the root of project directory and run:
 npm install
 npm start
 ```
-Environemnt variables
+
+**Health Check:**
 ```bash
-ADOBE_EMBED_API_KEY=...
+curl http://localhost:4000/api/health
+```
+
+**Frontend:**
+```bash
+# From repo root
+npm install
+npm start
+```
+
+**🔑 Environment Variables:**
+```bash
 LLM_PROVIDER=gemini
 GEMINI_MODEL=gemini-2.5-flash
 TTS_PROVIDER=azure
 AZURE_TTS_KEY=...
 AZURE_TTS_ENDPOINT=...
-GOOGLE_APPLICATION_CREDENTIALS=/credentials/...
+GOOGLE_API_KEY=...
 ```
-🛟 Troubleshooting
-	•	Port already in use
+
+## 🛟 Troubleshooting
+
+### Port Already in Use
 ```bash
 Bind for 0.0.0.0:3000 failed
 ```
@@ -197,14 +178,16 @@ Stop anything on that port or change your mapping:
 ```bash
 -p 8080:8080
 ```
-•	“Heading detection failed (check backend)” in the viewer
+
+### "Heading detection failed (check backend)" in the viewer
 Make sure the backend endpoints are reachable and healthy:
 ```bash
 curl http://localhost:8080/api/health
 ```
-•	**PDFs not opening or displaying blank pages**
 
-Clear your browser's local storage:
+### **PDFs not opening or showing "failed to fetch"**
+
+**Clear your browser's local storage:**
 1. Open Chrome Developer Tools (F12)
 2. Go to the **Application** tab
 3. In the left sidebar, expand **Local Storage**
