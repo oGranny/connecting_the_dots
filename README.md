@@ -2,6 +2,10 @@
 
 PDF exploration platform that combines advanced document analysis, AI-powered insights, and interactive features. Upload PDFs, navigate through smart table of contents, ask AI questions using RAG (Retrieval-Augmented Generation), and generate podcasts from selected text—all in one seamless interface.
 
+## 🎬 Demo
+
+Check out our demo: [Demo Video](https://drive.google.com/drive/folders/1wBwBbH747e5jldWefSUI5zQsqZ6hRqGB?usp=sharing)
+
 ## ✨ Key Features
 - 🔍 Smart PDF Viewer: Pan, zoom, rotate, annotate with drawing tools
 - 🤖 AI-Powered Chat: Ask questions about your documents using advanced RAG
@@ -97,12 +101,12 @@ connecting_the_dots/
 
 **Build**
 ```bash
-docker build --platform linux/amd64 -t connectin-the-dots:prod .
+docker build --platform linux/amd64 -t connectin-the-dots .
 ```
 
 **Run**
 ```bash
-docker run --rm --platform linux/amd64 -p 8080:8080 connectin-the-dots:prod
+docker run -e LLM_PROVIDER=gemini -e GEMINI_MODEL=gemini-2.5 -e TTS_PROVIDER=azure -e GOOGLE_API_KEY=<GOOGLE_API_KEY> -e AZURE_TTS_KEY=<AZURE_TTS_KEY> -e AZURE_TTS_ENDPOINT=<AZURE_TTS_ENDPOINT> -p 8080:8080 -p 4000:4000 connecting_the_dots
 ```
 
 #### Run (with env & credentials)
@@ -125,7 +129,7 @@ docker run --rm --platform linux/amd64 \
   -e TTS_PROVIDER=azure \
   -e AZURE_TTS_KEY=your_azure_key \
   -e AZURE_TTS_ENDPOINT=https://example.azure.com/tts \
-  -p 8080:8080 connectin-the-dots:prod
+  -p 8080:8080 connecting-the-dots:prod
 
 #docker compose(optional)
 docker-compose up -d
@@ -198,3 +202,11 @@ Make sure the backend endpoints are reachable and healthy:
 ```bash
 curl http://localhost:8080/api/health
 ```
+•	**PDFs not opening or displaying blank pages**
+
+Clear your browser's local storage:
+1. Open Chrome Developer Tools (F12)
+2. Go to the **Application** tab
+3. In the left sidebar, expand **Local Storage**
+4. Select your domain and clear all entries
+5. Refresh the page and try uploading the PDF again

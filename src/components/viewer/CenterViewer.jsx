@@ -6,7 +6,7 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { Download, ZoomIn, ZoomOut, RotateCcw, Pencil, Eraser, ChevronLeft, ChevronRight } from "lucide-react";
+import { Download, ZoomIn, ZoomOut, RotateCcw, Pencil, Eraser, ChevronLeft, FileText } from "lucide-react";
 
 import { Document, Page, pdfjs } from "react-pdf";
 import "react-pdf/dist/Page/AnnotationLayer.css";
@@ -389,8 +389,9 @@ export default function CenterViewer({ activeFile, onReady, onStatus, onAnchor, 
     return (
       <div className="flex-1 min-h-0 flex items-center justify-center bg-neutral-950 text-slate-300">
         <div className="text-center">
+          <FileText size={56} className="mx-auto mb-4 text-slate-500/70" aria-label="Document" />
           <div className="text-sm">Drop a PDF or click <span className="font-medium">New</span>.</div>
-          <div className="text-xs text-slate-400 mt-1">Ctrl+wheel & pinch zoom · continuous pages · pan/draw/highlight/anchor</div>
+          <div className="text-xs text-slate-400 mt-1">Connecting the dots one at a time</div>
         </div>
       </div>
     );

@@ -34,3 +34,5 @@ pydub>=0.25.0
 
 google-genai==1.2.0
 azure-cognitiveservices-speech==1.45.0
+
+gunicorn==23.0.0
